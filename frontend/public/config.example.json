@@ -1,0 +1,7 @@
+{
+  "region": "us-east-1",
+  "cognitoDomain": "https://dsy1107-ng-perez.auth.us-east-1.amazoncognito.com",
+  "clientId": "xxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "redirectUri": "http://localhost:4200/",
+  "apiUrl": "https://xxxxxxxxxx.execute-api.us-east-1.amazonaws.com"
+}

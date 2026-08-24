@@ -1,0 +1,11 @@
+.angular
+.idea
+.vscode
+frontend/node_modules
+
+# Credenciales temporales del Learner Lab. NUNCA se versionan: son claves
+# vivas mientras dura la sesion del lab.
+credenciales-lab.env
+
+# Artefacto intermedio del despliegue.
+front.zip

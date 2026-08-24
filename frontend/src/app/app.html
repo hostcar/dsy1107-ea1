@@ -1,0 +1,92 @@
+<main>
+  @if (!cfg.listo()) {
+    <!-- Sin config.json no hay nada que hacer: ni sabemos a que Cognito ir. -->
+    <h1>Falta configurar el front</h1>
+    <p>
+      No hay valores para: <code>{{ cfg.faltantes().join(', ') }}</code>
+    </p>
+    <p>Genera el archivo desde Terraform y recarga la página:</p>
+    <pre>
+cd ../terraform
+terraform output -raw config_frontend &gt; ../frontend/public/config.json</pre>
+  } @else {
+    <header>
+      <h1>DSY1107 · Identidad con Cognito</h1>
+      <p class="sub">Authorization Code + PKCE · API Gateway con JWT Authorizer · Angular</p>
+    </header>
+
+    @if (auth.error(); as mensaje) {
+      <p class="error">{{ mensaje }}</p>
+    }
+
+    <section class="tarjeta">
+      <h2>1 · Sesión</h2>
+
+      @if (auth.sesionActiva()) {
+        <p>
+          Sesión iniciada como
+          <strong>{{ auth.idClaims()?.email ?? auth.idClaims()?.['cognito:username'] }}</strong>
+          @if (auth.idClaims()?.name) {
+            ({{ auth.idClaims()?.name }})
+          }
+        </p>
+        <p class="nota">
+          El access token expira en <strong>{{ expiraEn() }}</strong
+          >. Cuando llegue a 0:00 el API Gateway responde 401 aunque esta pantalla siga abierta.
+        </p>
+        <button (click)="cerrarSesion()">Cerrar sesión</button>
+      } @else {
+        <p>No hay sesión. El login ocurre en Cognito, no en esta página.</p>
+        <button (click)="iniciarSesion()">Iniciar sesión con Cognito</button>
+      }
+    </section>
+
+    @if (auth.sesionActiva()) {
+      <section class="tarjeta">
+        <h2>2 · Los tokens que devolvió el IDaaS</h2>
+        <p class="nota">
+          El <strong>ID Token</strong> dice quién eres (OIDC). El <strong>Access Token</strong> dice
+          qué puedes hacer (OAuth2): fíjate en su claim <code>scope</code>.
+        </p>
+
+        <details open>
+          <summary>ID Token · claims</summary>
+          <pre>{{ auth.idClaims() | json }}</pre>
+        </details>
+        <details>
+          <summary>Access Token · claims</summary>
+          <pre>{{ auth.accessClaims() | json }}</pre>
+        </details>
+      </section>
+
+      <section class="tarjeta">
+        <h2>3 · Consumir APIs con ese token</h2>
+        <div class="botones">
+          <button (click)="llamar(userInfo)">/oauth2/userInfo</button>
+          <button (click)="llamar(getUser)">Cognito GetUser</button>
+          <button (click)="llamar(datosConToken)">/datos con token</button>
+          <button class="peligro" (click)="llamar(datosSinToken)">/datos sin token</button>
+          <button (click)="llamar(datosPublicos)">/publico/datos</button>
+        </div>
+
+        @if (cargando()) {
+          <p>Llamando…</p>
+        } @else if (resultado(); as r) {
+          <div class="resultado" [class.ok]="r.ok" [class.falla]="!r.ok">
+            <p>
+              <strong>{{ r.descripcion }}</strong> → HTTP {{ r.status || 'sin respuesta' }}
+            </p>
+            <pre>{{ r.cuerpo | json }}</pre>
+          </div>
+        }
+      </section>
+    }
+
+    <footer>
+      <p class="nota">
+        El botón «sin token» debe responder <strong>401</strong>: es la evidencia de que la API ya
+        no está abierta. Si responde 200, el authorizer no quedó aplicado a la ruta.
+      </p>
+    </footer>
+  }
+</main>

@@ -1,0 +1,33 @@
+# === Terraform =============================================================
+
+# El estado guarda TODO lo desplegado en texto plano, incluida la contrasena
+# del usuario de prueba. Nunca va a GitHub.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+
+.terraform/
+
+# Variables reales (contrasenas, correos). El .example si se versiona.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+*.tfplan
+*.tfplan.*
+
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# === Credenciales ==========================================================
+.env
+*.pem
+credentials
+
+# === Sistema ===============================================================
+.DS_Store
+Thumbs.db
