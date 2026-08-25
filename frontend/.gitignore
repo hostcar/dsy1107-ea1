@@ -43,6 +43,8 @@ __screenshots__/
 .DS_Store
 Thumbs.db
 
-# Configuracion propia de cada estudiante (client_id y URLs de su despliegue).
+# Configuracion propia de cada despliegue (client_id y URLs). No se versiona:
+# lo generan ./deploy.sh y el paso "Generar config.json" del CI, cada uno desde
+# los outputs de Terraform, para que apunte a la infraestructura que existe hoy.
 # El .example si se versiona.
-# /public/config.json
+/public/config.json

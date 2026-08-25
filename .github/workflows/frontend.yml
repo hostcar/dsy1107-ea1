@@ -44,11 +44,11 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  AMPLIFY_APP_ID: d36l5ygvcqeske
-  AMPLIFY_BRANCH: main
-  REDIRECT_URI: https://main.d36l5ygvcqeske.amplifyapp.com
-
+# El app_id, la URL y los datos de Cognito NO se fijan aquí: cambian cada vez
+# que se recrea la infraestructura (un reseteo del lab da app_id y user pool
+# nuevos). Viven como variables de repositorio, que ./sincronizar-github.sh
+# carga desde los outputs de Terraform. Así un reseteo se absorbe con un
+# comando y no editando este archivo.
 
 jobs:
   # ===========================================================================
@@ -72,6 +72,21 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # public/config.json es lo que ConfigService lee en runtime, antes del
+      # primer render. Se genera aquí y no se toma del repositorio para que el
+      # bundle publicado apunte siempre a la infraestructura que existe hoy: si
+      # se recrea Cognito o el API Gateway, este paso lo recoge y un archivo
+      # versionado no. El cuerpo vive en scripts/, compartido con ./deploy.sh.
+      - name: Generar config.json
+        env:
+          REGION: ${{ vars.AWS_REGION }}
+          COGNITO_DOMAIN: ${{ vars.COGNITO_DOMAIN }}
+          CLIENT_ID: ${{ vars.COGNITO_CLIENT_ID }}
+          REDIRECT_URI: ${{ vars.REDIRECT_URI }}
+          API_URL: ${{ vars.API_URL }}
+          EXIGIR_HTTPS: '1'
+        run: scripts/config-frontend.sh
+
       - name: Instalar dependencias
         working-directory: frontend
         run: npm ci
@@ -91,9 +106,16 @@ jobs:
 
       - name: Publicar en Amplify
         if: github.event_name != 'pull_request'
+        env:
+          # OJO: es el app_id de Amplify (empieza con 'd'), no el client_id de
+          # Cognito. Confundirlos da un ValidationException en CreateDeployment.
+          APP_ID: ${{ vars.AMPLIFY_APP_ID }}
+          RAMA: ${{ vars.AMPLIFY_BRANCH || 'main' }}
+          DESTINO: ${{ vars.REDIRECT_URI }}
         # El empaquetado, la subida y el sondeo del job viven en scripts/,
         # compartidos con el despliegue local. El script también valida el
         # directorio antes de publicarlo (index.html y config.json presentes).
         run: |
-          scripts/publicar-amplify.sh "$AMPLIFY_APP_ID" "$AMPLIFY_BRANCH" "$RUTA_BUILD"
-          echo "### Front publicado en ${REDIRECT_URI%/}" >> "$GITHUB_STEP_SUMMARY"
+          [ -n "$APP_ID" ] || { echo "::error::Falta la variable AMPLIFY_APP_ID. Ejecuta ./sincronizar-github.sh"; exit 1; }
+          scripts/publicar-amplify.sh "$APP_ID" "$RAMA" "$RUTA_BUILD"
+          echo "### Front publicado en ${DESTINO%/}" >> "$GITHUB_STEP_SUMMARY"
