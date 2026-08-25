@@ -44,6 +44,12 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  AMPLIFY_APP_ID: dsy1107-frontend
+  AMPLIFY_BRANCH: main
+  REDIRECT_URI: https://main.d36l5ygvcqeske.amplifyapp.com
+
+
 jobs:
   # ===========================================================================
   # FRONT · Angular. En pull request compila y prueba; publica solo en main.
@@ -59,10 +65,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Node 22
+      - name: Node 24
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24'
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -85,14 +91,9 @@ jobs:
 
       - name: Publicar en Amplify
         if: github.event_name != 'pull_request'
-        env:
-          APP_ID: ${{ vars.AMPLIFY_APP_ID }}
-          RAMA: ${{ vars.AMPLIFY_BRANCH || 'main' }}
-          DESTINO: ${{ vars.REDIRECT_URI }}
         # El empaquetado, la subida y el sondeo del job viven en scripts/,
         # compartidos con el despliegue local. El script también valida el
         # directorio antes de publicarlo (index.html y config.json presentes).
         run: |
-          [ -n "$APP_ID" ] || { echo "::error::Falta la variable AMPLIFY_APP_ID"; exit 1; }
-          scripts/publicar-amplify.sh "$APP_ID" "$RAMA" "$RUTA_BUILD"
-          echo "### Front publicado en ${DESTINO%/}" >> "$GITHUB_STEP_SUMMARY"
+          scripts/publicar-amplify.sh "$AMPLIFY_APP_ID" "$AMPLIFY_BRANCH" "$RUTA_BUILD"
+          echo "### Front publicado en ${REDIRECT_URI%/}" >> "$GITHUB_STEP_SUMMARY"
