@@ -45,4 +45,4 @@ Thumbs.db
 
 # Configuracion propia de cada estudiante (client_id y URLs de su despliegue).
 # El .example si se versiona.
-/public/config.json
+# /public/config.json

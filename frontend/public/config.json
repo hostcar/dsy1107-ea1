@@ -1,0 +1,7 @@
+{
+  "region": "us-east-1",
+  "cognitoDomain": "https://dsy1107-ng-rivera.auth.us-east-1.amazoncognito.com",
+  "clientId": "63pgkioq3tc43i7kh7i2cji82a",
+  "redirectUri": "https://main.d36l5ygvcqeske.amplifyapp.com/",
+  "apiUrl": "https://hrriyp5sg2.execute-api.us-east-1.amazonaws.com"
+}
