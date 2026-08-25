@@ -45,7 +45,7 @@ permissions:
   contents: read
 
 env:
-  AMPLIFY_APP_ID: dsy1107frontend
+  AMPLIFY_APP_ID: 63pgkioq3tc43i7kh7i2cji82a
   AMPLIFY_BRANCH: main
   REDIRECT_URI: https://main.d36l5ygvcqeske.amplifyapp.com
 
