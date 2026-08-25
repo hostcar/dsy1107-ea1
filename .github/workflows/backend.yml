@@ -1,0 +1,78 @@
+# =============================================================================
+# DSY1107 · EA1 — CI del backend Spring Boot.
+#
+# WIP: hoy backend/ solo tiene el pom.xml (Spring Boot 4.1.1 sobre Java 25).
+# El job no falla mientras no haya fuentes —un "mvn verify" sin src/ tampoco
+# probaria nada— pero se activa solo en cuanto exista backend/src, sin que haya
+# que acordarse de volver aqui a habilitarlo.
+#
+# Todavia no publica en ninguna parte: cuando se decida el destino (una task de
+# ECS, un jar en Elastic Beanstalk, una Lambda), el paso de despliegue va al
+# final de este mismo job, detras de la misma condicion de rama que usa el
+# front en frontend.yml.
+# =============================================================================
+
+name: CI · Backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  construir:
+    name: Build y pruebas
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: ¿Hay fuentes todavía?
+        id: estado
+        run: |
+          if [ -d backend/src ]; then
+            echo "hay_fuentes=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hay_fuentes=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::backend/ solo tiene pom.xml; el build se activará cuando exista backend/src."
+          fi
+
+      # java.version del pom es 25. Si ahí cambia, cambia aquí.
+      - name: Java 25
+        if: steps.estado.outputs.hay_fuentes == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Build y pruebas
+        if: steps.estado.outputs.hay_fuentes == 'true'
+        working-directory: backend
+        run: mvn --batch-mode --no-transfer-progress verify
+
+      - name: Guardar el jar
+        if: steps.estado.outputs.hay_fuentes == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-jar
+          path: backend/target/*.jar
+          if-no-files-found: warn
+          retention-days: 7

@@ -9,3 +9,21 @@ credenciales-lab.env
 
 # Artefacto intermedio del despliegue.
 front.zip
+
+# Estado de Terraform: guarda EN CLARO la contrasena del usuario demo de
+# Cognito (aws_cognito_user.demo.password). Un "git add -A" sin esto la
+# publicaria en GitHub.
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform/
+terraform/tfplan
+
+# Valores propios de cada despliegue (incluida la contrasena). El .example si.
+terraform/*.tfvars
+!terraform/*.tfvars.example
+
+# Artefactos de build
+frontend/dist/
+backend/target/
+
+.DS_Store

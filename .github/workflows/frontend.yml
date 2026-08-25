@@ -1,0 +1,113 @@
+# =============================================================================
+# DSY1107 · EA1 — CI del front Angular: build, pruebas y publicación en
+# Amplify. El backend tiene su propio workflow (backend.yml).
+#
+# El alcance es la APLICACIÓN, no la infraestructura. Terraform queda fuera a
+# propósito: terraform.tfstate guarda en claro la contraseña del usuario demo
+# de Cognito, así que no se versiona y el pipeline no puede leerlo. La infra se
+# aplica en local con ./deploy.sh, y sus datos llegan aquí como variables de
+# repositorio (./sincronizar-github.sh las carga de una vez).
+#
+# El reparto entre variables y secretos es el mismo punto que enseña 1.2.4: el
+# client_id de una SPA es público —viaja en claro en cada /authorize— así que
+# va como variable. Lo único secreto son las credenciales de AWS.
+#
+#   Variables:  AWS_REGION · AMPLIFY_APP_ID · AMPLIFY_BRANCH (opcional)
+#               COGNITO_DOMAIN · COGNITO_CLIENT_ID · REDIRECT_URI · API_URL
+#   Secretos:   AWS_ACCESS_KEY_ID · AWS_SECRET_ACCESS_KEY · AWS_SESSION_TOKEN
+#
+# Las credenciales del Learner Lab caducan al cerrar el lab: hay que refrescar
+# los tres secretos en cada sesión.
+# =============================================================================
+
+name: CI · Front
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+  workflow_dispatch:
+
+# Dos despliegues simultaneos sobre la misma rama de Amplify se pisan: gana el
+# ultimo en llegar, que no siempre es el ultimo commit.
+concurrency:
+  group: front-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  # ===========================================================================
+  # FRONT · Angular. En pull request compila y prueba; publica solo en main.
+  # ===========================================================================
+  frontend:
+    name: Front Angular
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUTA_BUILD: frontend/dist/frontend/browser
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # public/config.json no está versionado: cambia con cada despliegue y es
+      # lo que ConfigService lee en runtime, antes del primer render.
+      - name: Generar config.json
+        env:
+          REGION: ${{ vars.AWS_REGION }}
+          COGNITO_DOMAIN: ${{ vars.COGNITO_DOMAIN }}
+          CLIENT_ID: ${{ vars.COGNITO_CLIENT_ID }}
+          REDIRECT_URI: ${{ vars.REDIRECT_URI }}
+          API_URL: ${{ vars.API_URL }}
+          EXIGIR_HTTPS: '1'
+        # El cuerpo vive en scripts/, compartido con el despliegue local, para
+        # que ambas rutas produzcan el mismo archivo con las mismas
+        # validaciones. Aquí solo se mapean las variables del repositorio.
+        run: scripts/config-frontend.sh
+
+      - name: Instalar dependencias
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Credenciales de AWS
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Publicar en Amplify
+        if: github.event_name != 'pull_request'
+        env:
+          APP_ID: ${{ vars.AMPLIFY_APP_ID }}
+          RAMA: ${{ vars.AMPLIFY_BRANCH || 'main' }}
+          DESTINO: ${{ vars.REDIRECT_URI }}
+        # El empaquetado, la subida y el sondeo del job viven en scripts/,
+        # compartidos con el despliegue local. El script también valida el
+        # directorio antes de publicarlo (index.html y config.json presentes).
+        run: |
+          [ -n "$APP_ID" ] || { echo "::error::Falta la variable AMPLIFY_APP_ID"; exit 1; }
+          scripts/publicar-amplify.sh "$APP_ID" "$RAMA" "$RUTA_BUILD"
+          echo "### Front publicado en ${DESTINO%/}" >> "$GITHUB_STEP_SUMMARY"
