@@ -5,8 +5,7 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
-      - 'scripts/publicar-fargate.sh'
-      - '.github/workflows/backend.yml'
+      - '.github/workflows/backend_compile.yml'
 
 jobs:
   # ---------------------------------------------------------------------------

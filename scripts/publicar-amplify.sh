@@ -1,12 +1,5 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Publica un directorio ya compilado en una rama de Amplify (despliegue manual
-# por zip) y espera a que el job termine.
-#
-# Lo usan el despliegue local (deploy.sh) y GitHub Actions (frontend.yml). Vive
-# aqui, y no duplicado en cada uno, porque son el mismo procedimiento: si el
-# formato del zip o el sondeo del job cambian, tienen que cambiar en un solo
-# lugar.
 #
 #   Uso: publicar-amplify.sh <app-id> <rama> <directorio-compilado>
 #
