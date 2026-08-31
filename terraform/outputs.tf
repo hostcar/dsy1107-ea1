@@ -125,3 +125,19 @@ output "env_frontend" {
     FE_API_URL=${aws_apigatewayv2_api.api.api_endpoint}
   EOT
 }
+
+# -----------------------------------------------------------------------------
+# Identificadores que consume scripts/publicar-fargate.sh para reapuntar la
+# integracion despues de cada despliegue. Sin balanceador, la IP de la task
+# cambia cada vez y alguien tiene que actualizarla; ese alguien es el script.
+# -----------------------------------------------------------------------------
+
+output "api_id" {
+  description = "Id del HTTP API. Lo lee publicar-fargate.sh."
+  value       = aws_apigatewayv2_api.api.id
+}
+
+output "integracion_id" {
+  description = "Id de la integracion HTTP_PROXY. Lo lee publicar-fargate.sh."
+  value       = aws_apigatewayv2_integration.backend.id
+}

@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+#
+# Publica una version nueva del backend en ECS Fargate.
+#
+# Mismo reparto que con Amplify y que el que la guia 1.3.8 planteaba para
+# Beanstalk: Terraform crea lo que existe una vez (cluster, balanceador,
+# servicio) y este script publica lo que cambia en cada commit (la imagen).
+#
+#   ./scripts/publicar-fargate.sh
+#
+# Lee cluster, servicio y repositorio de los outputs de Terraform, asi que no
+# hay nombres repetidos en dos sitios.
+
+set -euo pipefail
+
+REGION="${AWS_REGION:-us-east-1}"
+RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TF="terraform -chdir=${RAIZ}/terraform"
+
+echo "==> Leyendo la configuracion desde Terraform"
+REPO="$($TF output -raw ecs_repositorio)"
+CLUSTER="$($TF output -raw ecs_cluster)"
+SERVICIO="$($TF output -raw ecs_servicio)"
+
+# Etiqueta unica por despliegue, como pedia la lamina 19: reutilizar una
+# etiqueta hace imposible saber que esta corriendo, y volver atras.
+VERSION="v$(date +%Y%m%d-%H%M%S)"
+
+# ./mvnw y no "mvn": el wrapper baja la version de Maven que declara
+# .mvn/wrapper/maven-wrapper.properties, asi el proyecto compila igual en una
+# maquina sin Maven instalado. Es el mismo motivo por el que el front usa npm
+# desde package.json y no una instalacion global.
+echo "==> 1/5 Construyendo el jar"
+( cd "${RAIZ}/backend" && ./mvnw --batch-mode --no-transfer-progress clean verify )
+
+# --platform linux/amd64 NO es opcional: si construyes en un Mac con Apple
+# Silicon, la imagen sale arm64 y la task de Fargate muere con "exec format
+# error", que no dice nada util. Debe coincidir con el runtime_platform de
+# ecs.tf.
+echo "==> 2/5 Construyendo la imagen (${VERSION}, linux/amd64)"
+docker build --platform linux/amd64 \
+  -t "${REPO}:${VERSION}" -t "${REPO}:latest" "${RAIZ}/backend"
+
+echo "==> 3/5 Autenticando contra ECR"
+aws ecr get-login-password --region "$REGION" \
+  | docker login --username AWS --password-stdin "${REPO%%/*}"
+
+echo "==> 4/5 Subiendo la imagen"
+docker push "${REPO}:${VERSION}"
+docker push "${REPO}:latest"
+
+# La task definition apunta a :latest, asi que no hay que registrarla de nuevo:
+# basta con obligar al servicio a levantar tasks nuevas, que vuelven a bajar la
+# etiqueta. La imagen con la etiqueta ${VERSION} queda ademas como historial
+# para poder volver atras.
+echo "==> 5/5 Redesplegando el servicio"
+aws ecs update-service --region "$REGION" \
+  --cluster "$CLUSTER" --service "$SERVICIO" \
+  --force-new-deployment >/dev/null
+
+echo "    Esperando a que el despliegue termine..."
+INTENTOS=60
+for INTENTO in $(seq 1 $INTENTOS); do
+  LEIDO="$(aws ecs describe-services --region "$REGION" \
+    --cluster "$CLUSTER" --services "$SERVICIO" \
+    --query "services[0].[deployments[0].rolloutState,runningCount,desiredCount]" \
+    --output text)"
+  ESTADO="$(echo "$LEIDO" | awk '{print $1}')"
+  CORRIENDO="$(echo "$LEIDO" | awk '{print $2}')"
+  DESEADAS="$(echo "$LEIDO" | awk '{print $3}')"
+  echo "    ${ESTADO}  ${CORRIENDO}/${DESEADAS}"
+
+  # Los tres campos, no solo el estado: mismo criterio que en Amplify, un
+  # despliegue a medias no pasa por bueno.
+  if [ "$ESTADO" = "COMPLETED" ] && [ "$CORRIENDO" = "$DESEADAS" ]; then
+    break
+  fi
+  if [ "$ESTADO" = "FAILED" ]; then
+    echo
+    echo "FALLO el despliegue. Los logs del contenedor:" >&2
+    echo "    $($TF output -raw ecs_logs)" >&2
+    exit 1
+  fi
+  if [ "$INTENTO" -eq "$INTENTOS" ]; then
+    echo "Se agoto la espera. Revisa:  $($TF output -raw ecs_logs)" >&2
+    exit 1
+  fi
+  sleep 10
+done
+
+# ---------------------------------------------------------------------------
+# Reapuntar el API Gateway.
+#
+# Esto es lo que un balanceador haria innecesario: sin ALB, cada despliegue
+# levanta una task con IP publica nueva, asi que la integracion del gateway
+# queda apuntando a una direccion muerta hasta que alguien la actualice.
+#
+# La IP no se pregunta directamente: la task expone una interfaz de red (ENI),
+# y la IP publica cuelga de esa interfaz. Son tres saltos.
+# ---------------------------------------------------------------------------
+echo "==> Reapuntando el API Gateway a la task nueva"
+
+TAREA="$(aws ecs list-tasks --region "$REGION" \
+  --cluster "$CLUSTER" --service-name "$SERVICIO" --desired-status RUNNING \
+  --query "taskArns[0]" --output text)"
+
+ENI="$(aws ecs describe-tasks --region "$REGION" \
+  --cluster "$CLUSTER" --tasks "$TAREA" \
+  --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" \
+  --output text)"
+
+IP="$(aws ec2 describe-network-interfaces --region "$REGION" \
+  --network-interface-ids "$ENI" \
+  --query "NetworkInterfaces[0].Association.PublicIp" --output text)"
+
+if [ -z "$IP" ] || [ "$IP" = "None" ]; then
+  echo "No se pudo resolver la IP publica de la task ($TAREA)." >&2
+  exit 1
+fi
+
+aws apigatewayv2 update-integration --region "$REGION" \
+  --api-id "$($TF output -raw api_id)" \
+  --integration-id "$($TF output -raw integracion_id)" \
+  --integration-uri "http://${IP}:8080/datos" >/dev/null
+
+echo
+echo "OK  ${VERSION} desplegada."
+echo "    backend directo : http://${IP}:8080/actuator/health"
+echo "    via API Gateway : $($TF output -raw url_datos_protegido)   (401 sin token)"
+echo
+echo "    La IP cambia en cada despliegue; por eso este script reapunta el"
+echo "    gateway. apigateway.tf lo sabe: ignore_changes en integration_uri."

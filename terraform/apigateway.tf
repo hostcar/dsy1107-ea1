@@ -36,6 +36,19 @@ resource "aws_apigatewayv2_integration" "backend" {
   integration_uri        = var.backend_url
   payload_format_version = "1.0"
   timeout_milliseconds   = 29000
+
+  # Quien manda sobre integration_uri es publicar-fargate.sh, no este archivo.
+  # Sin balanceador, la IP de la task cambia en cada despliegue, y el script la
+  # reapunta al terminar. Sin este ignore_changes, el siguiente "terraform
+  # apply" la devolveria a var.backend_url (mindicador.cl) y el backend propio
+  # quedaria desconectado sin que nadie lo note.
+  #
+  # Es el mismo tipo de deriva que teniamos con SERVER_PORT en Beanstalk, pero
+  # aqui es deliberada: el valor es dinamico por naturaleza y Terraform no puede
+  # conocerlo.
+  lifecycle {
+    ignore_changes = [integration_uri]
+  }
 }
 
 # -----------------------------------------------------------------------------

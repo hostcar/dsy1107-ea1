@@ -1,0 +1,99 @@
+# =============================================================================
+# DSY1107 - EA1 - Configuracion del backend.
+#
+# Todo lo de aqui se puede pisar con variables de entorno, que es como se
+# configurara el dia que esto corra en un contenedor:
+#
+#   BACKEND_MINDICADOR_TTL=30s
+#   BACKEND_MINDICADOR_URL=https://mindicador.cl/api
+#   SERVER_PORT=9090
+# =============================================================================
+
+spring:
+  application:
+    name: ae1-backend
+
+server:
+  port: 8080
+  # Sin esto, un error devuelve la pagina de error de Spring. Con esto, el JSON
+  # de ManejadorDeErrores llega tal cual al front.
+  error:
+    include-message: always
+    include-stacktrace: never
+
+backend:
+  mindicador:
+    # El mismo valor que la variable backend_url de terraform/variables.tf.
+    url: https://mindicador.cl/api
+
+    # Los indicadores se publican una vez al dia: 10 minutos es de sobra, y
+    # convierte una clase de 40 personas en un puñado de llamadas al origen.
+    # Para demostrar el vencimiento en vivo, bajarlo a 30s.
+    ttl: 10m
+
+    conectar-en: 3s
+    leer-en: 10s
+
+    # Lista blanca de /datos/{indicador}. Lo que no este aqui es un 404 que ni
+    # siquiera sale a la red.
+    disponibles:
+      - uf
+      - ivp
+      - dolar
+      - dolar_intercambio
+      - euro
+      - ipc
+      - utm
+      - imacec
+      - tpm
+      - libra_cobre
+      - tasa_desempleo
+      - bitcoin
+
+  cors:
+    # Solo para el modo local, apuntando el front derecho al :8080. En el
+    # despliegue real el CORS lo pone el API Gateway. Sin barra final.
+    origenes:
+      - http://localhost:4200
+      - http://localhost:5173
+
+# -----------------------------------------------------------------------------
+# Actuator: /actuator/health es lo que sondea el entorno de Beanstalk.
+#
+# Los dos valores de abajo son los que Spring ya trae por defecto. Se escriben
+# igual, explicitos, porque las dos decisiones importan:
+#
+#   exposure.include: health  -> por HTTP no se publica nada mas. /actuator/env
+#     y /actuator/beans filtran configuracion y estructura interna; en este
+#     backend no hay puerta (el token lo valida el gateway), asi que lo que se
+#     exponga aqui queda al alcance de quien alcance el puerto 8080.
+#
+#   show-details: never       -> la respuesta es exactamente {"status":"UP"},
+#     que es lo que muestra la lamina 9 de la guia. El detalle del cache vive
+#     en GET /cache, que es donde corresponde.
+#
+# Lo que a proposito NO hay aqui: un HealthIndicator que le pegue a
+# mindicador.cl. Ver la nota en IndicadoresService y en el README: si el health
+# del proceso dependiera del origen, una caida de mindicador.cl haria que
+# Beanstalk declarara enferma una aplicacion que esta respondiendo bien con la
+# copia en cache. La salud propia no se subcontrata a un tercero.
+# -----------------------------------------------------------------------------
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      # Spring Boot 4 registra por defecto los grupos liveness/readiness (las
+      # probes de Kubernetes), y entonces /actuator/health responde
+      # {"groups":["liveness","readiness"],"status":"UP"}. A Beanstalk le da
+      # igual —solo mira que sea 200— pero aqui no hay Kubernetes y la salida
+      # deja de ser la {"status":"UP"} de la lamina 9 de la guia. Se apagan.
+      probes:
+        enabled: false
+
+logging:
+  level:
+    cl.duoc.dsy1107.ae1: DEBUG

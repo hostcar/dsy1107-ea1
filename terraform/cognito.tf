@@ -49,8 +49,13 @@ resource "aws_cognito_user_pool" "pool" {
 # de la presentacion 1.2.1.
 # -----------------------------------------------------------------------------
 
+locals {
+  # Ver la nota de var.cognito_dominio en variables.tf.
+  dominio_hosted_ui = var.cognito_dominio != "" ? var.cognito_dominio : "dsy1107-ng-${var.estudiante}"
+}
+
 resource "aws_cognito_user_pool_domain" "hosted_ui" {
-  domain       = "dsy1107-ng-${var.estudiante}"
+  domain       = local.dominio_hosted_ui
   user_pool_id = aws_cognito_user_pool.pool.id
 
   # 1 = Hosted UI clasica, sin configuracion extra.

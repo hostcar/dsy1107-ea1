@@ -1,0 +1,8 @@
+# El contexto solo necesita el jar ya construido.
+src/
+.mvn/
+mvnw
+*.md
+Procfile
+target/*
+!target/backend.jar

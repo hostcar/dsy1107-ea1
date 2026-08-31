@@ -54,13 +54,14 @@ jobs:
             echo "::notice::backend/ solo tiene pom.xml; el build se activará cuando exista backend/src."
           fi
 
-      # java.version del pom es 25. Si ahí cambia, cambia aquí.
-      - name: Java 25
+      # java.version del pom es 21 (debe coincidir con la plataforma de
+      # Beanstalk). Si ahí cambia, cambia aquí.
+      - name: Java 21
         if: steps.estado.outputs.hay_fuentes == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '25'
+          java-version: '21'
           cache: maven
 
       - name: Build y pruebas

@@ -11,28 +11,49 @@
     <groupId>cl.duoc.dsy1107</groupId>
     <artifactId>ae1</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name/>
-    <description/>
-    <url/>
-    <licenses>
-        <license/>
-    </licenses>
-    <developers>
-        <developer/>
-    </developers>
-    <scm>
-        <connection/>
-        <developerConnection/>
-        <tag/>
-        <url/>
-    </scm>
+    <name>ae1-backend</name>
+    <description>DSY1107 EA1 - backend que queda detras del API Manager: proxy con cache de mindicador.cl</description>
+
     <properties>
-        <java.version>25</java.version>
+        <!-- Tiene que coincidir con la plataforma de Beanstalk
+             (terraform/beanstalk.tf: "... running Corretto 21"). Compilar con
+             una version mayor que la de la plataforma revienta en el arranque
+             con UnsupportedClassVersionError. Es la lamina 7 de la guia 1.3.8.
+             El JDK local puede ser mayor: Maven compila apuntando a 21. -->
+        <java.version>21</java.version>
     </properties>
+
     <dependencies>
+        <!-- starter-web y no starter a secas: esto expone HTTP y trae el RestClient
+             con el que se consume mindicador.cl. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <!-- /actuator/health es el health check del entorno de Beanstalk
+             (lamina 16 de la guia 1.3.8: "Application Healthcheck URL"). Sin
+             esto el entorno pide "/" y recibe 404: queda Severe con la app
+             perfectamente viva. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- En Spring Boot 4 el RestClient.Builder autoconfigurado ya no viene
+             dentro de starter-web: vive en su propio modulo. Es el cliente con
+             el que se llama a mindicador.cl. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-restclient</artifactId>
+        </dependency>
+
+        <!-- Solo genera el autocompletado de application.yml para las propiedades
+             backend.*. No viaja en el jar final. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
         </dependency>
 
         <dependency>
@@ -40,9 +61,22 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- Spring Boot 4 partio el modulo de test: @WebMvcTest y MockMvc ya no
+             vienen en starter-test, hay que pedirlos aparte. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
+        <!-- El jar se llama siempre backend.jar, sin la version en el nombre.
+             Asi el Procfile ("web: java -jar backend.jar") no cambia nunca y el
+             script de empaquetado tampoco. -->
+        <finalName>backend</finalName>
+
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

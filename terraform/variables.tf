@@ -85,3 +85,29 @@ variable "backend_url" {
   type        = string
   default     = "https://mindicador.cl/api"
 }
+
+# -----------------------------------------------------------------------------
+# El dominio del Hosted UI es UNICO A NIVEL MUNDIAL, y ademas Cognito no lo
+# libera de inmediato al borrar el user pool: queda retenido un rato y cualquier
+# intento de recrearlo falla con "Domain already associated with another user
+# pool". En un Learner Lab, que arrasa la cuenta al cerrar la sesion, eso pasa
+# seguido.
+#
+# Por eso tiene su propia variable en vez de derivarse de var.estudiante: asi se
+# puede cambiar SOLO el dominio sin renombrar —y por tanto recrear— los otros
+# veinte recursos.
+#
+#   terraform apply -var="cognito_dominio=dsy1107-ng-rivera-2"
+#
+# Vacio (por defecto) = se arma solo a partir de var.estudiante.
+# -----------------------------------------------------------------------------
+variable "cognito_dominio" {
+  description = "Dominio del Hosted UI. Vacio lo deriva de var.estudiante. Cambiar solo si quedo retenido."
+  type        = string
+  default     = ""
+
+  validation {
+    condition     = var.cognito_dominio == "" || can(regex("^[a-z0-9-]{3,63}$", var.cognito_dominio))
+    error_message = "Solo minusculas, numeros y guiones."
+  }
+}
