@@ -1,0 +1,68 @@
+name: Frontend Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/frontend_deploy.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      RUTA_BUILD: frontend/dist/frontend/browser
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Generar config.json
+        env:
+          REGION: ${{ vars.AWS_REGION }}
+          COGNITO_DOMAIN: ${{ vars.COGNITO_DOMAIN }}
+          CLIENT_ID: ${{ vars.COGNITO_CLIENT_ID }}
+          REDIRECT_URI: ${{ vars.REDIRECT_URI }}
+          API_URL: ${{ vars.API_URL }}
+          EXIGIR_HTTPS: '1'
+        run: scripts/config-frontend.sh
+
+      - name: Instalar dependencias
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+      - name: Credenciales de AWS
+        if: github.event_name != 'pull_request'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Publicar en Amplify
+        if: github.event_name != 'pull_request'
+        env:
+          APP_ID: ${{ vars.AMPLIFY_APP_ID }}
+          RAMA: ${{ vars.AMPLIFY_BRANCH || 'main' }}
+          DESTINO: ${{ vars.REDIRECT_URI }}
+        run: |
+          [ -n "$APP_ID" ] || { echo "::error::Falta la variable AMPLIFY_APP_ID. Ejecuta ./sincronizar-github.sh"; exit 1; }
+          scripts/publicar-amplify.sh "$APP_ID" "$RAMA" "$RUTA_BUILD"
+          echo "### Front publicado en ${DESTINO%/}" >> "$GITHUB_STEP_SUMMARY"
