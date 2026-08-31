@@ -17,10 +17,36 @@ REGION="${AWS_REGION:-us-east-1}"
 RAIZ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TF="terraform -chdir=${RAIZ}/terraform"
 
-echo "==> Leyendo la configuracion desde Terraform"
-REPO="$($TF output -raw ecs_repositorio)"
-CLUSTER="$($TF output -raw ecs_cluster)"
-SERVICIO="$($TF output -raw ecs_servicio)"
+# ---------------------------------------------------------------------------
+# De donde salen los nombres.
+#
+# En local, de los outputs de Terraform: no hay que repetirlos en ningun sitio.
+# En el pipeline no sirve, porque el estado de Terraform es local y esta en
+# .gitignore: alli los valores llegan como variables de entorno (variables del
+# repositorio en GitHub Actions).
+#
+# La variable de entorno manda; Terraform es el respaldo. Asi el MISMO script
+# corre en los dos lados, que era el punto: una sola definicion del
+# procedimiento.
+# ---------------------------------------------------------------------------
+leer() {
+  local desde_entorno="${!1:-}"
+  if [ -n "$desde_entorno" ]; then
+    echo "$desde_entorno"
+  elif command -v terraform >/dev/null 2>&1 && $TF output -raw "$2" >/dev/null 2>&1; then
+    $TF output -raw "$2"
+  else
+    echo "Falta \$$1 y no hay salida '$2' en Terraform." >&2
+    return 1
+  fi
+}
+
+echo "==> Leyendo la configuracion"
+REPO="$(leer ECR_REPO ecs_repositorio)"
+CLUSTER="$(leer ECS_CLUSTER ecs_cluster)"
+SERVICIO="$(leer ECS_SERVICE ecs_servicio)"
+API_ID="$(leer API_ID api_id)"
+INTEGRACION_ID="$(leer INTEGRATION_ID integracion_id)"
 
 # Etiqueta unica por despliegue, como pedia la lamina 19: reutilizar una
 # etiqueta hace imposible saber que esta corriendo, y volver atras.
@@ -78,11 +104,11 @@ for INTENTO in $(seq 1 $INTENTOS); do
   if [ "$ESTADO" = "FAILED" ]; then
     echo
     echo "FALLO el despliegue. Los logs del contenedor:" >&2
-    echo "    $($TF output -raw ecs_logs)" >&2
+    echo "    aws logs tail /ecs/${SERVICIO} --follow" >&2
     exit 1
   fi
   if [ "$INTENTO" -eq "$INTENTOS" ]; then
-    echo "Se agoto la espera. Revisa:  $($TF output -raw ecs_logs)" >&2
+    echo "Se agoto la espera. Revisa:  aws logs tail /ecs/${SERVICIO} --follow" >&2
     exit 1
   fi
   sleep 10
@@ -119,14 +145,16 @@ if [ -z "$IP" ] || [ "$IP" = "None" ]; then
 fi
 
 aws apigatewayv2 update-integration --region "$REGION" \
-  --api-id "$($TF output -raw api_id)" \
-  --integration-id "$($TF output -raw integracion_id)" \
+  --api-id "$API_ID" \
+  --integration-id "$INTEGRACION_ID" \
   --integration-uri "http://${IP}:8080/datos" >/dev/null
 
 echo
 echo "OK  ${VERSION} desplegada."
 echo "    backend directo : http://${IP}:8080/actuator/health"
-echo "    via API Gateway : $($TF output -raw url_datos_protegido)   (401 sin token)"
+if URL_API="$($TF output -raw url_datos_protegido 2>/dev/null)"; then
+  echo "    via API Gateway : ${URL_API}   (401 sin token)"
+fi
 echo
 echo "    La IP cambia en cada despliegue; por eso este script reapunta el"
 echo "    gateway. apigateway.tf lo sabe: ignore_changes en integration_uri."

@@ -49,6 +49,47 @@ data "aws_subnets" "publicas" {
   }
 }
 
+# -----------------------------------------------------------------------------
+# LA RUTA A INTERNET. No es un extra: sin esto no funciona NADA.
+#
+# La VPC por defecto de este Learner Lab tiene el internet gateway adjunto pero
+# su tabla de rutas principal NO trae la ruta 0.0.0.0/0 hacia el. Una VPC por
+# defecto normal si la trae; esta no. El sintoma no dice nada de rutas:
+#
+#   Fargate   -> ResourceInitializationError: unable to pull registry auth:
+#                There is a connection issue between the task and Amazon ECR
+#   Beanstalk -> "None of the instances are sending data", y a los ~18 minutos
+#                LaunchWaitCondition failed
+#
+# Los dos son lo mismo: la maquina arranca, pero no puede hablar con AWS. Tres
+# intentos de Beanstalk se perdieron persiguiendo la plataforma y el tipo de
+# instancia cuando el problema estaba aqui.
+#
+# Se declara como recurso para que quede en codigo y le pase a cualquiera que
+# clone esto. Si la cuenta ya tuviera la ruta, el apply falla con
+# RouteAlreadyExists y basta con borrar este bloque.
+# -----------------------------------------------------------------------------
+data "aws_internet_gateway" "default" {
+  filter {
+    name   = "attachment.vpc-id"
+    values = [data.aws_vpc.default.id]
+  }
+}
+
+data "aws_route_table" "principal" {
+  vpc_id = data.aws_vpc.default.id
+  filter {
+    name   = "association.main"
+    values = ["true"]
+  }
+}
+
+resource "aws_route" "salida_a_internet" {
+  route_table_id         = data.aws_route_table.principal.id
+  destination_cidr_block = "0.0.0.0/0"
+  gateway_id             = data.aws_internet_gateway.default.id
+}
+
 # El ID de la cuenta se pregunta en vez de quemarse: asi el archivo sirve en el
 # lab de cualquiera. Se declara aqui y no en otro archivo para que fargate.tf se
 # sostenga solo.

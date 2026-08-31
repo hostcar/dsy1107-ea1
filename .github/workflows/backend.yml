@@ -1,15 +1,35 @@
 # =============================================================================
-# DSY1107 · EA1 — CI del backend Spring Boot.
+# DSY1107 · EA1 — CI/CD del backend Spring Boot.
 #
-# WIP: hoy backend/ solo tiene el pom.xml (Spring Boot 4.1.1 sobre Java 25).
-# El job no falla mientras no haya fuentes —un "mvn verify" sin src/ tampoco
-# probaria nada— pero se activa solo en cuanto exista backend/src, sin que haya
-# que acordarse de volver aqui a habilitarlo.
+# Este workflow arrastraba una deuda desde que se creo: compilaba el jar y lo
+# guardaba como artefacto, pero no publicaba en ninguna parte porque el destino
+# estaba sin decidir. Ya esta decidido —ECS Fargate— y el paso de despliegue es
+# el segundo job.
 #
-# Todavia no publica en ninguna parte: cuando se decida el destino (una task de
-# ECS, un jar en Elastic Beanstalk, una Lambda), el paso de despliegue va al
-# final de este mismo job, detras de la misma condicion de rama que usa el
-# front en frontend.yml.
+# El despliegue NO reimplementa nada: llama a scripts/publicar-fargate.sh, el
+# mismo que se usa en local. Una sola definicion del procedimiento; si cambia el
+# como se publica, cambia en un archivo y los dos lados lo heredan.
+#
+# -----------------------------------------------------------------------------
+# CREDENCIALES: la parte fragil, y hay que decirla
+#
+# Lo correcto seria OIDC (sin secretos de larga vida), pero eso exige crear un
+# proveedor de identidad y un rol IAM, y el Learner Lab no permite crear roles.
+# Asi que se usan las credenciales temporales del lab como secretos:
+#
+#   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
+#
+# CADUCAN CON LA SESION DEL LAB (unas horas). Cuando el pipeline falle con
+# ExpiredToken, no esta roto: hay que volver a copiarlas desde el lab. Es el
+# mismo credenciales-lab.env de siempre, ahora tambien en GitHub.
+#
+# Los nombres de recursos van como VARIABLES del repositorio, no como secretos:
+# no son secretos, y verlos en el log ayuda a diagnosticar.
+#
+#   vars.AWS_REGION  vars.ECR_REPO  vars.ECS_CLUSTER
+#   vars.ECS_SERVICE vars.API_ID    vars.INTEGRATION_ID
+#
+# Salen todos de "terraform output".
 # =============================================================================
 
 name: CI · Backend
@@ -19,11 +39,13 @@ on:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'scripts/publicar-fargate.sh'
       - '.github/workflows/backend.yml'
   pull_request:
     branches: [main]
     paths:
       - 'backend/**'
+      - 'scripts/publicar-fargate.sh'
       - '.github/workflows/backend.yml'
   workflow_dispatch:
 
@@ -35,6 +57,10 @@ permissions:
   contents: read
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # Compilar y probar. Corre siempre, tambien en pull requests: es la red que
+  # impide que llegue a main algo que no compila.
+  # ---------------------------------------------------------------------------
   construir:
     name: Build y pruebas
     runs-on: ubuntu-latest
@@ -44,20 +70,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: ¿Hay fuentes todavía?
-        id: estado
-        run: |
-          if [ -d backend/src ]; then
-            echo "hay_fuentes=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "hay_fuentes=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::backend/ solo tiene pom.xml; el build se activará cuando exista backend/src."
-          fi
-
-      # java.version del pom es 21 (debe coincidir con la plataforma de
-      # Beanstalk). Si ahí cambia, cambia aquí.
+      # java.version del pom es 21 (debe coincidir con la imagen base del
+      # Dockerfile y con el runtime_platform de fargate.tf). Si ahi cambia,
+      # cambia aqui.
       - name: Java 21
-        if: steps.estado.outputs.hay_fuentes == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -65,15 +81,57 @@ jobs:
           cache: maven
 
       - name: Build y pruebas
-        if: steps.estado.outputs.hay_fuentes == 'true'
         working-directory: backend
-        run: mvn --batch-mode --no-transfer-progress verify
+        run: ./mvnw --batch-mode --no-transfer-progress verify
 
       - name: Guardar el jar
-        if: steps.estado.outputs.hay_fuentes == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: backend-jar
-          path: backend/target/*.jar
-          if-no-files-found: warn
+          path: backend/target/backend.jar
+          if-no-files-found: error
           retention-days: 7
+
+  # ---------------------------------------------------------------------------
+  # Publicar en Fargate. Solo desde main: un pull request no despliega.
+  # ---------------------------------------------------------------------------
+  desplegar:
+    name: Desplegar en Fargate
+    needs: construir
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      # El session token es obligatorio: las credenciales del Learner Lab son
+      # temporales y sin el la llamada falla con InvalidClientTokenId.
+      - name: Credenciales AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION || 'us-east-1' }}
+
+      # El runner es amd64, asi que el --platform linux/amd64 del script no
+      # emula nada aqui: es gratis. En un Mac con Apple Silicon si hace falta, y
+      # por eso esta en el script y no en el workflow.
+      - name: Publicar
+        run: ./scripts/publicar-fargate.sh
+        env:
+          AWS_REGION:     ${{ vars.AWS_REGION || 'us-east-1' }}
+          ECR_REPO:       ${{ vars.ECR_REPO }}
+          ECS_CLUSTER:    ${{ vars.ECS_CLUSTER }}
+          ECS_SERVICE:    ${{ vars.ECS_SERVICE }}
+          API_ID:         ${{ vars.API_ID }}
+          INTEGRATION_ID: ${{ vars.INTEGRATION_ID }}
