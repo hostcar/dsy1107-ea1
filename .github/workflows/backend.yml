@@ -19,9 +19,21 @@
 #
 #   AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN
 #
-# CADUCAN CON LA SESION DEL LAB (unas horas). Cuando el pipeline falle con
-# ExpiredToken, no esta roto: hay que volver a copiarlas desde el lab. Es el
-# mismo credenciales-lab.env de siempre, ahora tambien en GitHub.
+# CADUCAN CON LA SESION DEL LAB (unas horas), y el error NO dice "caducado".
+# Al cerrarse el lab, AWS Academy adjunta una politica de deny explicito
+# (voc-cancel-cred) y cualquier llamada responde:
+#
+#   AccessDeniedException: ... is not authorized to perform: <accion>
+#   ... with an explicit deny in an identity-based policy
+#
+# Eso se lee como un problema de permisos y se pierde media hora revisando IAM.
+# No lo es: significa que el lab se cerro. Se reabre, se copian las tres
+# credenciales de nuevo, y listo. Es el mismo credenciales-lab.env de siempre,
+# ahora tambien en GitHub.
+#
+# Comprobacion rapida para distinguirlo de un permiso mal puesto: si
+# "aws sts get-caller-identity" funciona pero cualquier otra llamada da deny
+# explicito, es el lab, no tu politica.
 #
 # Los nombres de recursos van como VARIABLES del repositorio, no como secretos:
 # no son secretos, y verlos en el log ayuda a diagnosticar.

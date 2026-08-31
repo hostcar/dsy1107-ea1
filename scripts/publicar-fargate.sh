@@ -87,10 +87,24 @@ aws ecs update-service --region "$REGION" \
 echo "    Esperando a que el despliegue termine..."
 INTENTOS=60
 for INTENTO in $(seq 1 $INTENTOS); do
-  LEIDO="$(aws ecs describe-services --region "$REGION" \
+  # Sin "|| true" el set -e mata el script con el error crudo de AWS. Interesa
+  # distinguir dos cosas que se parecen y no son lo mismo: un despliegue que va
+  # mal, y un lab que se cerro debajo.
+  if ! LEIDO="$(aws ecs describe-services --region "$REGION" \
     --cluster "$CLUSTER" --services "$SERVICIO" \
     --query "services[0].[deployments[0].rolloutState,runningCount,desiredCount]" \
-    --output text)"
+    --output text 2>&1)"; then
+    if echo "$LEIDO" | grep -q "explicit deny"; then
+      echo >&2
+      echo "Se cerro la sesion del Learner Lab en mitad del despliegue." >&2
+      echo "La imagen YA se subio y el redespliegue YA se lanzo; solo se perdio" >&2
+      echo "el sondeo. Reabre el lab, actualiza las credenciales y vuelve a" >&2
+      echo "correr esto para confirmar el estado." >&2
+      exit 1
+    fi
+    echo "No se pudo consultar el servicio: $LEIDO" >&2
+    exit 1
+  fi
   ESTADO="$(echo "$LEIDO" | awk '{print $1}')"
   CORRIENDO="$(echo "$LEIDO" | awk '{print $2}')"
   DESEADAS="$(echo "$LEIDO" | awk '{print $3}')"
