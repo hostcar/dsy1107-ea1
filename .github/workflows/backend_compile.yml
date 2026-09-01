@@ -8,12 +8,8 @@ on:
       - '.github/workflows/backend_compile.yml'
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Compilar y probar. Corre siempre, tambien en pull requests: es la red que
-  # impide que llegue a main algo que no compila.
-  # ---------------------------------------------------------------------------
   construir:
-    name: Build y pruebas
+    name: Build
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
@@ -21,9 +17,6 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # java.version del pom es 21 (debe coincidir con la imagen base del
-      # Dockerfile y con el runtime_platform de fargate.tf). Si ahi cambia,
-      # cambia aqui.
       - name: Java 21
         uses: actions/setup-java@v4
         with:
@@ -31,6 +24,7 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build y pruebas
+      - name: Build
         working-directory: backend
-        run: ./mvnw --batch-mode --no-transfer-progress package -DskipTests
+        run: mvn --batch-mode --no-transfer-progress package -DskipTests
+
