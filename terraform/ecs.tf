@@ -286,6 +286,28 @@ resource "aws_ecs_service" "backend" {
   # esperara el estado estable, el primer apply se colgaria hasta agotarse
   # porque todavia no hay imagen en ECR.
   wait_for_steady_state = false
+
+  # ---------------------------------------------------------------------------
+  # QUIEN MANDA SOBRE LA REVISION QUE CORRE. Mismo problema que el
+  # integration_uri del API Gateway, y misma solucion.
+  #
+  # Terraform declara la task definition BASE: cuanta CPU, que rol, que
+  # variables de entorno. Pero la revision que el servicio ejecuta la elige el
+  # despliegue, porque es la que lleva clavada la etiqueta de la imagen
+  # (backend_deploy.yml registra una revision nueva por version, que es lo que
+  # permite volver atras).
+  #
+  # Sin este ignore_changes, el siguiente "terraform apply" devolveria el
+  # servicio a la revision que Terraform conoce -- o sea, a la imagen anterior --
+  # y el despliegue se perderia SIN QUE NADA FALLE A LA VISTA.
+  #
+  # El precio, y hay que saberlo: si cambias una variable de entorno aqui, el
+  # apply registra la revision nueva pero NO se la pone al servicio. Hay que
+  # correr el despliegue despues para que llegue.
+  # ---------------------------------------------------------------------------
+  lifecycle {
+    ignore_changes = [task_definition]
+  }
 }
 
 # -----------------------------------------------------------------------------

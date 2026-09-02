@@ -16,21 +16,37 @@ spring:
   # ---------------------------------------------------------------------------
   # La base del CRUD de /productos (terraform/rds.tf).
   #
-  # NO HAY URL POR DEFECTO, Y ES DELIBERADO. Las tres variables llegan del
-  # entorno: en ECS las pone el bloque environment de la task (terraform/ecs.tf)
-  # y en local las pone quien levanta el backend:
+  # Hay dos formas de darle valores, y las dos sirven:
   #
-  #   SPRING_DATASOURCE_URL="$(terraform -chdir=../terraform output -raw db_jdbc_url)" \
-  #   SPRING_DATASOURCE_USERNAME=postgres SPRING_DATASOURCE_PASSWORD=... ./mvnw spring-boot:run
+  #   a) Por variable de entorno, sin tocar este archivo. Es lo que hace ECS
+  #      (el bloque environment de la task, en terraform/ecs.tf), y en local:
   #
-  # Poner aqui un localhost de relleno seria peor: el backend arrancaria
-  # "bien" contra una base que no es, y el error aparecerian recien en la
-  # primera peticion. Sin valor, falla al arrancar y dice exactamente que falta.
+  #        set -a; eval "$(terraform -chdir=../terraform output -raw backend_env)"; set +a
+  #        ./mvnw spring-boot:run
   #
-  # En las pruebas estas tres variables no existen, y como H2 esta en el
-  # classpath de test, Spring Boot levanta solo una base en memoria. Por eso las
-  # pruebas no necesitan ni el RDS ni Docker.
+  #   b) Escribiendo el valor aqui mismo, en lugar del ${...}:
+  #
+  #        url: jdbc:postgresql://<host>.rds.amazonaws.com:5432/dsy1107?sslmode=require
+  #
+  #      El sslmode=require no es opcional: desde PostgreSQL 15, RDS rechaza
+  #      toda conexion en claro. Sin el, el arranque falla con "no pg_hba.conf
+  #      entry for host ... no encryption", que suena a permisos y es cifrado.
+  #
+  # CUIDADO SI ESCRIBES LA CONTRASENA AQUI: este archivo SI se versiona, asi que
+  # se iria a GitHub con ella dentro. Para el uso diario conviene (a).
+  #
+  # POR QUE EL VALOR POR DEFECTO ES VACIO Y NO UN LOCALHOST. Con la url en
+  # blanco, Spring Boot ignora esta configuracion y levanta una base H2 en
+  # memoria (H2 esta en el classpath de test). Eso es justo lo que permite que
+  # "./mvnw test" corra las 29 pruebas sin RDS y sin Docker. Un localhost de
+  # relleno lo romperia: las pruebas intentarian conectarse a una base que no
+  # existe en la maquina de nadie.
   # ---------------------------------------------------------------------------
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://dsy1107-db-rivera.crgwtvlsw7oj.us-east-1.rds.amazonaws.com:5432/dsy1107?sslmode=require}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:Duoc2026Postgres}
+
   jpa:
     hibernate:
       # validate, no update: al arrancar comprueba que las entidades y las

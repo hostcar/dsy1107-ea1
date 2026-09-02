@@ -101,7 +101,7 @@ variable "db_version" {
 #   terraform apply -var='origenes_postgres=["'"$(curl -s ifconfig.me)"'/32"]'
 # -----------------------------------------------------------------------------
 variable "origenes_postgres" {
-  description = "CIDRs autorizados a conectar al 5432. Cierralo a tu IP/32 si te importa."
+  description = "CIDRs autorizados a conectar al 5432."
   type        = list(string)
   default     = ["0.0.0.0/0"]
 }
@@ -226,11 +226,13 @@ resource "aws_db_instance" "postgres" {
   apply_immediately          = true
   auto_minor_version_upgrade = true
 
-  # Los logs del motor a CloudWatch. Es la unica forma de ver por que rechazo
-  # una conexion: RDS no te da acceso al sistema de archivos de la instancia.
+  # SIN exportar los logs del motor a CloudWatch, a proposito: esa opcion crea
+  # un log group aparte y aqui no hace falta ninguno. Los dos fallos que de
+  # verdad va a ver un estudiante --contrasena mala y falta de sslmode-- los
+  # dice el cliente en su propia pantalla.
   #
-  #   aws logs tail /aws/rds/instance/dsy1107-db-<apellido>/postgresql --follow
-  enabled_cloudwatch_logs_exports = ["postgresql"]
+  # Si algun dia hiciera falta mirar por que el motor rechaza una conexion, se
+  # enciende con:  enabled_cloudwatch_logs_exports = ["postgresql"]
 }
 
 # -----------------------------------------------------------------------------
@@ -277,7 +279,7 @@ output "db_jdbc_url" {
 }
 
 # -----------------------------------------------------------------------------
-# Como enchufarla al backend, si algun dia hace falta.
+# Como configurarla al backend
 #
 # El backend de la EA1 no la usa. Para que la use:
 #

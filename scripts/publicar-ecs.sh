@@ -81,14 +81,48 @@ echo "==> 4/5 Subiendo la imagen"
 docker push "${REPO}:${VERSION}"
 docker push "${REPO}:latest"
 
-# La task definition apunta a :latest, asi que no hay que registrarla de nuevo:
-# basta con obligar al servicio a levantar tasks nuevas, que vuelven a bajar la
-# etiqueta. La imagen con la etiqueta ${VERSION} queda ademas como historial
-# para poder volver atras.
-echo "==> 5/5 Redesplegando el servicio"
+# ---------------------------------------------------------------------------
+# Se registra una revision NUEVA clavada a ${VERSION}, en vez de reciclar
+# :latest con --force-new-deployment.
+#
+# NO ES UN CAPRICHO. backend_deploy.yml hace exactamente esto, y si aqui se
+# siguiera usando --force-new-deployment, este script quedaria roto en cuanto el
+# pipeline desplegara una vez: el servicio estaria clavado a una etiqueta
+# concreta, force-new-deployment volveria a bajar ESA, y el script diria
+# "desplegada" dejando corriendo la imagen anterior. Un fallo silencioso y con
+# cara de exito, que es el peor tipo.
+#
+# De paso queda el historial: cada revision apunta a una etiqueta distinta, asi
+# que volver atras es un update-service a la revision de antes.
+#
+# La familia de la task definition coincide con el nombre del servicio (los dos
+# salen de "dsy1107-backend-<apellido>" en ecs.tf). Preguntar por la familia
+# devuelve la ultima revision ACTIVA, que es la que mantiene Terraform: asi un
+# cambio de variables de entorno en ecs.tf entra en el despliegue siguiente.
+#
+# Requiere jq.
+# ---------------------------------------------------------------------------
+echo "==> 5/5 Registrando la revision y redesplegando"
+
+command -v jq >/dev/null || { echo "Falta jq." >&2; exit 1; }
+
+TAREA_JSON="$(aws ecs describe-task-definition --region "$REGION" \
+  --task-definition "$SERVICIO" --query taskDefinition --output json \
+  | jq --arg imagen "${REPO}:${VERSION}" '
+      .containerDefinitions = (.containerDefinitions
+        | map(if .name == "backend" then .image = $imagen else . end))
+      | del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+            .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)')"
+
+REVISION="$(aws ecs register-task-definition --region "$REGION" \
+  --cli-input-json "$TAREA_JSON" \
+  --query "taskDefinition.taskDefinitionArn" --output text)"
+
+echo "    revision ${REVISION##*/}"
+
 aws ecs update-service --region "$REGION" \
   --cluster "$CLUSTER" --service "$SERVICIO" \
-  --force-new-deployment >/dev/null
+  --task-definition "$REVISION" >/dev/null
 
 echo "    Esperando a que el despliegue termine..."
 INTENTOS=60
