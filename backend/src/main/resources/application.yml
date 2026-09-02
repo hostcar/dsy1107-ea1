@@ -13,6 +13,44 @@ spring:
   application:
     name: ae1-backend
 
+  # ---------------------------------------------------------------------------
+  # La base del CRUD de /productos (terraform/rds.tf).
+  #
+  # NO HAY URL POR DEFECTO, Y ES DELIBERADO. Las tres variables llegan del
+  # entorno: en ECS las pone el bloque environment de la task (terraform/ecs.tf)
+  # y en local las pone quien levanta el backend:
+  #
+  #   SPRING_DATASOURCE_URL="$(terraform -chdir=../terraform output -raw db_jdbc_url)" \
+  #   SPRING_DATASOURCE_USERNAME=postgres SPRING_DATASOURCE_PASSWORD=... ./mvnw spring-boot:run
+  #
+  # Poner aqui un localhost de relleno seria peor: el backend arrancaria
+  # "bien" contra una base que no es, y el error aparecerian recien en la
+  # primera peticion. Sin valor, falla al arrancar y dice exactamente que falta.
+  #
+  # En las pruebas estas tres variables no existen, y como H2 esta en el
+  # classpath de test, Spring Boot levanta solo una base en memoria. Por eso las
+  # pruebas no necesitan ni el RDS ni Docker.
+  # ---------------------------------------------------------------------------
+  jpa:
+    hibernate:
+      # validate, no update: al arrancar comprueba que las entidades y las
+      # tablas coincidan, y si no, se cae con un mensaje claro. Con "update"
+      # Hibernate alteraria una base real por su cuenta -- renombrar un campo en
+      # Java crearia una columna nueva y dejaria la vieja con todos los datos
+      # dentro, sin decir nada. El esquema lo manda Flyway.
+      ddl-auto: validate
+
+    # Sin esto, la sesion de JPA queda abierta durante todo el render de la
+    # respuesta. Aqui el controlador ya convierte a records antes de responder,
+    # asi que no hace falta, y dejarlo encendido esconde los accesos perezosos
+    # que deberian saltar como error en la capa de servicio.
+    open-in-view: false
+
+  flyway:
+    # El esquema vive en db/migration y se aplica al arrancar, tambien en las
+    # pruebas: la migracion esta escrita en SQL portable justamente para eso.
+    enabled: true
+
 server:
   port: 8080
   # Sin esto, un error devuelve la pagina de error de Spring. Con esto, el JSON

@@ -1,5 +1,15 @@
 # =============================================================================
-# El backend en ECS Fargate.
+# El backend en ECS: Elastic Container Service.
+#
+# UNA ACLARACION DE NOMBRES, porque se confunden todo el tiempo. ECS es el
+# servicio: el cluster, la definicion de task y el servicio que aparecen mas
+# abajo. Fargate NO es otro servicio ni una alternativa a ECS: es uno de sus
+# dos tipos de lanzamiento, o sea quien pone las maquinas donde corren las
+# tasks. Con launch_type = "FARGATE" las pone AWS y tu no ves ninguna; con
+# "EC2" las pones tu y las pagas por hora. Aqui se usa el primero, y por eso
+# la palabra Fargate aparece mas abajo en los sitios donde el tipo de
+# lanzamiento cambia el comportamiento (la arquitectura de la imagen, el
+# facturado por task, el error al no poder bajarla de ECR).
 #
 # Reemplaza a beanstalk.tf, que en esta cuenta no se puede usar: tres intentos,
 # tres LaunchWaitCondition agotados a los ~18 minutos, con dos plataformas y dos
@@ -12,14 +22,14 @@
 #
 # SIN BALANCEADOR, a proposito. Un ALB daria una direccion estable, pero cuesta
 # por hora y agrega cuatro recursos a un ejercicio de clase. En su lugar la task
-# sale con IP publica y publicar-fargate.sh reapunta el API Gateway despues de
-# cada despliegue. El precio de esa decision esta abajo, en el grupo de
-# seguridad, y hay que decirlo en voz alta.
+# sale con IP publica y publicar-ecs.sh reapunta el API Gateway despues de cada
+# despliegue. El precio de esa decision esta abajo, en el grupo de seguridad, y
+# hay que decirlo en voz alta.
 #
 # ORDEN DE USO (la imagen tiene que existir antes de que arranque la task):
 #
 #   1. terraform apply -target=aws_ecr_repository.backend
-#   2. scripts/publicar-fargate.sh
+#   2. scripts/publicar-ecs.sh
 #   3. terraform apply
 #
 # Aplicar todo de una tambien funciona: el servicio queda reintentando hasta que
@@ -91,7 +101,7 @@ resource "aws_route" "salida_a_internet" {
 }
 
 # El ID de la cuenta se pregunta en vez de quemarse: asi el archivo sirve en el
-# lab de cualquiera. Se declara aqui y no en otro archivo para que fargate.tf se
+# lab de cualquiera. Se declara aqui y no en otro archivo para que ecs.tf se
 # sostenga solo.
 data "aws_caller_identity" "actual" {}
 
@@ -184,7 +194,7 @@ resource "aws_ecs_task_definition" "backend" {
 
   # La imagen se construye en un Mac que puede ser ARM. Fargate corre x86_64
   # salvo que se le diga lo contrario, asi que el build DEBE ir con
-  # --platform linux/amd64 (lo hace publicar-fargate.sh). Si no coinciden, la
+  # --platform linux/amd64 (lo hace publicar-ecs.sh). Si no coinciden, la
   # task muere con "exec format error", que no explica nada.
   runtime_platform {
     operating_system_family = "LINUX"
@@ -204,8 +214,31 @@ resource "aws_ecs_task_definition" "backend" {
         }
       ]
 
+      # Las tres del datasource no tienen valor por defecto en application.yml:
+      # si faltan, el backend NO arranca. Es deliberado -- ver la nota en
+      # backend/src/main/resources/application.yml.
+      #
+      # LA CONTRASENA QUEDA EN CLARO EN LA DEFINICION DE TASK, y hay que decirlo
+      # en voz alta: cualquiera con acceso de lectura a la consola de ECS la ve,
+      # y tambien queda en el tfstate. Lo correcto seria "secrets" apuntando a
+      # Secrets Manager, que entrega el valor al contenedor sin escribirlo en
+      # ninguna parte. Se acepta aqui por lo mismo que el 8080 abierto de mas
+      # abajo: es un ejercicio de clase, y agregar Secrets Manager suma un
+      # recurso, un permiso de IAM y una discusion que no es la de esta EA.
+      # Si esto fuera a produccion, es lo primero que habria que cambiar.
       environment = [
-        { name = "BACKEND_MINDICADOR_TTL", value = "10m" }
+        { name = "BACKEND_MINDICADOR_TTL", value = "10m" },
+
+        # sslmode=require no es opcional: desde PostgreSQL 15 RDS trae
+        # rds.force_ssl en 1 y rechaza toda conexion en claro. Sin esto el
+        # arranque falla con "no pg_hba.conf entry for host ... no encryption",
+        # que suena a permisos y es cifrado.
+        {
+          name  = "SPRING_DATASOURCE_URL"
+          value = "jdbc:postgresql://${aws_db_instance.postgres.endpoint}/${aws_db_instance.postgres.db_name}?sslmode=require"
+        },
+        { name = "SPRING_DATASOURCE_USERNAME", value = aws_db_instance.postgres.username },
+        { name = "SPRING_DATASOURCE_PASSWORD", value = var.db_password }
       ]
 
       # Sin balanceador no hay target group que vigile la salud, asi que la
@@ -260,7 +293,7 @@ resource "aws_ecs_service" "backend" {
 #
 # No hay output con la URL del backend: sin balanceador, la direccion es la IP
 # publica de la task, cambia en cada despliegue y Terraform no la conoce. La
-# resuelve publicar-fargate.sh al final de cada publicacion.
+# resuelve publicar-ecs.sh al final de cada publicacion.
 # -----------------------------------------------------------------------------
 
 output "ecs_repositorio" {
@@ -269,12 +302,12 @@ output "ecs_repositorio" {
 }
 
 output "ecs_cluster" {
-  description = "Nombre del cluster. Lo lee publicar-fargate.sh."
+  description = "Nombre del cluster. Lo lee publicar-ecs.sh."
   value       = aws_ecs_cluster.backend.name
 }
 
 output "ecs_servicio" {
-  description = "Nombre del servicio. Lo lee publicar-fargate.sh."
+  description = "Nombre del servicio. Lo lee publicar-ecs.sh."
   value       = aws_ecs_service.backend.name
 }
 

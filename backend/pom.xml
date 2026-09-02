@@ -56,9 +56,82 @@
             <optional>true</optional>
         </dependency>
 
+        <!-- ================================================================
+             La persistencia: el CRUD de /productos sobre el PostgreSQL de
+             terraform/rds.tf.
+
+             OJO CON EL EFECTO SECUNDARIO: en cuanto esta dependencia entra al
+             classpath, Spring exige un DataSource para arrancar. Sin el, el
+             contexto no levanta y se caen tambien las pruebas que no tienen
+             nada que ver con la base.
+
+             Lo resuelve H2 mas abajo: como application.yml NO fija una URL
+             (llega del entorno), en las pruebas no hay ninguna configurada y
+             Spring Boot levanta solo una base en memoria.
+             ================================================================ -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa</artifactId>
+        </dependency>
+
+        <!-- @Valid sobre el cuerpo de POST y PUT. Sin esto las anotaciones
+             @NotBlank y @Positive se compilan pero no las mira nadie: el
+             validador no esta y la peticion pasa igual. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-validation</artifactId>
+        </dependency>
+
+        <!-- runtime y no compile: el codigo no nombra ni una clase del driver,
+             solo la URL jdbc:postgresql. Que no este disponible al compilar es
+             la garantia de que sigue siendo asi. -->
+        <dependency>
+            <groupId>org.postgresql</groupId>
+            <artifactId>postgresql</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
+        <!-- El esquema, versionado y en el repositorio, en vez de dejar que
+             Hibernate lo invente con ddl-auto. Contra una base real eso ultimo
+             es exactamente lo que no se hace: un rename de campo se convierte
+             en una columna nueva y los datos viejos quedan huerfanos sin que
+             nadie se entere. -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-core</artifactId>
+        </dependency>
+
+        <!-- Desde Flyway 10 los motores grandes van en modulos aparte:
+             flyway-core no sabe hablar PostgreSQL sin esto. (H2, en cambio, si
+             viene dentro de flyway-core: no existe un flyway-database-h2.) -->
+        <dependency>
+            <groupId>org.flywaydb</groupId>
+            <artifactId>flyway-database-postgresql</artifactId>
+        </dependency>
+        <!-- LA PIEZA QUE NO SE VE VENIR. Spring Boot 4 partio las
+             autoconfiguraciones en modulos por tecnologia, y la de Flyway ya no
+             viaja dentro de spring-boot-autoconfigure. Con flyway-core solo, la
+             libreria queda en el classpath y NADIE LA INVOCA: no hay error, no
+             hay log, simplemente las migraciones no corren y la primera senal
+             es un "Schema validation: missing table" que apunta a Hibernate y
+             no a Flyway. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-flyway</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- La base de las pruebas: en memoria, una por ejecucion. Las pruebas
+             no tocan el RDS ni necesitan Docker, y aun asi corren la migracion
+             de verdad, porque V1__producto.sql esta escrita en SQL portable. -->
+        <dependency>
+            <groupId>com.h2database</groupId>
+            <artifactId>h2</artifactId>
             <scope>test</scope>
         </dependency>
 

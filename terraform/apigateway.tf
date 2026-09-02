@@ -37,7 +37,7 @@ resource "aws_apigatewayv2_integration" "backend" {
   payload_format_version = "1.0"
   timeout_milliseconds   = 29000
 
-  # Quien manda sobre integration_uri es publicar-fargate.sh, no este archivo.
+  # Quien manda sobre integration_uri es publicar-ecs.sh, no este archivo.
   # Sin balanceador, la IP de la task cambia en cada despliegue, y el script la
   # reapunta al terminar. Sin este ignore_changes, el siguiente "terraform
   # apply" la devolveria a var.backend_url (mindicador.cl) y el backend propio
@@ -97,6 +97,81 @@ resource "aws_apigatewayv2_route" "datos_publico" {
   route_key = "GET /publico/datos"
   target    = "integrations/${aws_apigatewayv2_integration.backend.id}"
   # authorization_type = "NONE" es el valor por defecto.
+}
+
+# =============================================================================
+# El CRUD de /productos.
+#
+# POR QUE NO REUTILIZA LA INTEGRACION DE ARRIBA, que es la pregunta obvia:
+# aquella tiene integration_method = "GET" y una URI fija que termina en /datos.
+# Una integracion HTTP_PROXY asi no reenvia ni el metodo ni la ruta de quien
+# llamo -- los reemplaza por los suyos. Un POST /productos que entrara por ahi
+# llegaria al backend convertido en GET /datos, y devolveria indicadores
+# economicos con un 200, sin que nada parezca roto. De todos los fallos
+# posibles, ese es el peor: silencioso y con cara de exito.
+#
+# De ahi que hagan falta dos integraciones y no una: la URI no admite un patron
+# que sirva a la vez para la coleccion y para un elemento.
+#
+#   ANY /productos            -> http://IP:8080/productos
+#   ANY /productos/{proxy+}   -> http://IP:8080/productos/{proxy}
+#
+# {proxy+} es una ruta glotona: captura /productos/7 y tambien cualquier cosa
+# que cuelgue mas abajo. La variable {proxy} del lado de la integracion es la
+# que arrastra ese trozo hasta el backend.
+# =============================================================================
+
+resource "aws_apigatewayv2_integration" "productos_coleccion" {
+  api_id           = aws_apigatewayv2_api.api.id
+  integration_type = "HTTP_PROXY"
+
+  # ANY y no GET: es lo que deja pasar el metodo original. Con el CRUD esto
+  # importa mas que en /datos, porque aqui el metodo ES la operacion.
+  integration_method     = "ANY"
+  integration_uri        = "${var.backend_url}/productos"
+  payload_format_version = "1.0"
+  timeout_milliseconds   = 29000
+
+  # Mismo motivo que en la integracion de /datos: la IP de la task cambia en
+  # cada despliegue y quien la escribe es publicar-ecs.sh, no este archivo.
+  lifecycle {
+    ignore_changes = [integration_uri]
+  }
+}
+
+resource "aws_apigatewayv2_integration" "productos_elemento" {
+  api_id                 = aws_apigatewayv2_api.api.id
+  integration_type       = "HTTP_PROXY"
+  integration_method     = "ANY"
+  integration_uri        = "${var.backend_url}/productos/{proxy}"
+  payload_format_version = "1.0"
+  timeout_milliseconds   = 29000
+
+  lifecycle {
+    ignore_changes = [integration_uri]
+  }
+}
+
+# Las dos rutas van detras del mismo authorizer que /datos: la puerta es una
+# sola, y agregar recursos no agrega maneras de entrar.
+resource "aws_apigatewayv2_route" "productos_coleccion" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "ANY /productos"
+  target    = "integrations/${aws_apigatewayv2_integration.productos_coleccion.id}"
+
+  authorization_type   = "JWT"
+  authorizer_id        = aws_apigatewayv2_authorizer.cognito.id
+  authorization_scopes = ["openid"]
+}
+
+resource "aws_apigatewayv2_route" "productos_elemento" {
+  api_id    = aws_apigatewayv2_api.api.id
+  route_key = "ANY /productos/{proxy+}"
+  target    = "integrations/${aws_apigatewayv2_integration.productos_elemento.id}"
+
+  authorization_type   = "JWT"
+  authorizer_id        = aws_apigatewayv2_authorizer.cognito.id
+  authorization_scopes = ["openid"]
 }
 
 resource "aws_apigatewayv2_stage" "default" {

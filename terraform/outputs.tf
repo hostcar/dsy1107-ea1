@@ -127,17 +127,35 @@ output "env_frontend" {
 }
 
 # -----------------------------------------------------------------------------
-# Identificadores que consume scripts/publicar-fargate.sh para reapuntar la
+# Identificadores que consume scripts/publicar-ecs.sh para reapuntar la
 # integracion despues de cada despliegue. Sin balanceador, la IP de la task
 # cambia cada vez y alguien tiene que actualizarla; ese alguien es el script.
 # -----------------------------------------------------------------------------
 
 output "api_id" {
-  description = "Id del HTTP API. Lo lee publicar-fargate.sh."
+  description = "Id del HTTP API. Lo lee publicar-ecs.sh."
   value       = aws_apigatewayv2_api.api.id
 }
 
 output "integracion_id" {
-  description = "Id de la integracion HTTP_PROXY. Lo lee publicar-fargate.sh."
+  description = "Id de la integracion HTTP_PROXY de /datos. Lo lee publicar-ecs.sh."
   value       = aws_apigatewayv2_integration.backend.id
+}
+
+# Las del CRUD. Son tres integraciones en total y las TRES hay que reapuntarlas
+# despues de cada despliegue: si el script olvidara una, esa ruta seguiria
+# llamando a la IP de la task anterior, que ya no existe.
+output "integracion_productos_coleccion_id" {
+  description = "Id de la integracion de ANY /productos. Lo lee publicar-ecs.sh."
+  value       = aws_apigatewayv2_integration.productos_coleccion.id
+}
+
+output "integracion_productos_elemento_id" {
+  description = "Id de la integracion de ANY /productos/{proxy+}. Lo lee publicar-ecs.sh."
+  value       = aws_apigatewayv2_integration.productos_elemento.id
+}
+
+output "url_productos" {
+  description = "El CRUD, detras del authorizer. Sin token responde 401."
+  value       = "${aws_apigatewayv2_api.api.api_endpoint}/productos"
 }

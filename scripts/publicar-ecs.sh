@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 #
-# Publica una version nueva del backend en ECS Fargate.
+# Publica una version nueva del backend en ECS (Elastic Container Service).
+#
+# El servicio corre con tipo de lanzamiento Fargate, que es lo que hace que no
+# haya ninguna maquina que administrar aqui: este script construye la imagen,
+# la sube y le pide a ECS que reemplace la task.
 #
 # Mismo reparto que con Amplify y que el que la guia 1.3.8 planteaba para
 # Beanstalk: Terraform crea lo que existe una vez (cluster, balanceador,
 # servicio) y este script publica lo que cambia en cada commit (la imagen).
 #
-#   ./scripts/publicar-fargate.sh
+#   ./scripts/publicar-ecs.sh
 #
 # Lee cluster, servicio y repositorio de los outputs de Terraform, asi que no
 # hay nombres repetidos en dos sitios.
@@ -47,6 +51,8 @@ CLUSTER="$(leer ECS_CLUSTER ecs_cluster)"
 SERVICIO="$(leer ECS_SERVICE ecs_servicio)"
 API_ID="$(leer API_ID api_id)"
 INTEGRACION_ID="$(leer INTEGRATION_ID integracion_id)"
+INTEGRACION_PRODUCTOS_COL="$(leer INTEGRATION_PRODUCTOS_COL_ID integracion_productos_coleccion_id)"
+INTEGRACION_PRODUCTOS_ELE="$(leer INTEGRATION_PRODUCTOS_ELE_ID integracion_productos_elemento_id)"
 
 # Etiqueta unica por despliegue, como pedia la lamina 19: reutilizar una
 # etiqueta hace imposible saber que esta corriendo, y volver atras.
@@ -158,14 +164,29 @@ if [ -z "$IP" ] || [ "$IP" = "None" ]; then
   exit 1
 fi
 
-aws apigatewayv2 update-integration --region "$REGION" \
-  --api-id "$API_ID" \
-  --integration-id "$INTEGRACION_ID" \
-  --integration-uri "http://${IP}:8080/datos" >/dev/null
+# Las TRES integraciones apuntan a la misma task, cada una a su ruta. Olvidar
+# una no rompe nada a la vista: esa ruta sigue respondiendo, pero contra la IP
+# de la task anterior, que ya no existe. Por eso van juntas en un bucle y no
+# en tres llamadas sueltas que se puedan desincronizar al editarlas.
+reapuntar() {  # $1 = id de la integracion, $2 = ruta en el backend
+  aws apigatewayv2 update-integration --region "$REGION" \
+    --api-id "$API_ID" \
+    --integration-id "$1" \
+    --integration-uri "http://${IP}:8080$2" >/dev/null
+}
+
+reapuntar "$INTEGRACION_ID"            "/datos"
+reapuntar "$INTEGRACION_PRODUCTOS_COL" "/productos"
+
+# La llave de {proxy} va escapada para que bash no la toque: tiene que llegar
+# literal al API Gateway, que es quien la sustituye por el trozo de ruta que
+# capturo {proxy+}.
+reapuntar "$INTEGRACION_PRODUCTOS_ELE" "/productos/{proxy}"
 
 echo
 echo "OK  ${VERSION} desplegada."
 echo "    backend directo : http://${IP}:8080/actuator/health"
+echo "    productos       : http://${IP}:8080/productos"
 if URL_API="$($TF output -raw url_datos_protegido 2>/dev/null)"; then
   echo "    via API Gateway : ${URL_API}   (401 sin token)"
 fi

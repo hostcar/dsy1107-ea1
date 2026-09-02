@@ -29,6 +29,9 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      # ConfigService lee este archivo en runtime, antes del primer render. No
+      # se versiona: cada despliegue lo genera con los valores de la cuenta
+      # actual, que salen de "terraform output".
       - name: Generar config.json
         env:
           REGION: ${{ vars.AWS_REGION }}
@@ -36,8 +39,36 @@ jobs:
           CLIENT_ID: ${{ vars.COGNITO_CLIENT_ID }}
           REDIRECT_URI: ${{ vars.REDIRECT_URI }}
           API_URL: ${{ vars.API_URL }}
-          EXIGIR_HTTPS: '1'
-        run: scripts/config-frontend.sh
+        run: |
+          set -euo pipefail
+
+          faltan=()
+          for v in REGION COGNITO_DOMAIN CLIENT_ID REDIRECT_URI API_URL; do
+            [[ -n "${!v:-}" ]] || faltan+=("$v")
+          done
+          if [[ ${#faltan[@]} -gt 0 ]]; then
+            echo "Faltan variables del repositorio: ${faltan[*]}" >&2
+            exit 1
+          fi
+
+          # Con el redirectUri de localhost el build compila igual y la app solo
+          # falla en el navegador, con un redirect_mismatch que no menciona este
+          # paso. Es el fallo numero uno del despliegue en Amplify.
+          if [[ "$REDIRECT_URI" != https://* ]]; then
+            echo "REDIRECT_URI vale '$REDIRECT_URI'; debe ser la URL de Amplify, no localhost." >&2
+            exit 1
+          fi
+
+          jq -n \
+            --arg region        "$REGION" \
+            --arg cognitoDomain "$COGNITO_DOMAIN" \
+            --arg clientId      "$CLIENT_ID" \
+            --arg redirectUri   "$REDIRECT_URI" \
+            --arg apiUrl        "$API_URL" \
+            '{region:$region, cognitoDomain:$cognitoDomain, clientId:$clientId, redirectUri:$redirectUri, apiUrl:$apiUrl}' \
+            > frontend/public/config.json
+
+          echo "config.json generado (redirectUri: $REDIRECT_URI)"
 
       - name: Instalar dependencias
         working-directory: frontend
