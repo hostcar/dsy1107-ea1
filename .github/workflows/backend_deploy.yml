@@ -66,6 +66,10 @@ jobs:
           java-version: '21'
           cache: maven
 
+      - name: Build
+        working-directory: backend
+        run: mvn --batch-mode --no-transfer-progress package -DskipTests
+
       # Una etiqueta por despliegue, y es lo que hace posible volver atras: con
       # solo :latest no se puede saber que esta corriendo ni a que version
       # regresar. La revision de la task definition queda clavada a esta.
