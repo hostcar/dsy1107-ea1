@@ -3,9 +3,9 @@ name: Frontend Compile
 on:
   push:
     branches: [main]
-    paths:
-      - 'frontend/**'
-      - '.github/workflows/frontend_compile.yml'
+#    paths:
+#      - 'frontend/**'
+#      - '.github/workflows/frontend_compile.yml'
 
 permissions:
   contents: read
