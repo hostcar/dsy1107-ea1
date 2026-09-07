@@ -10,6 +10,10 @@ credenciales-lab.env
 # Artefacto intermedio del despliegue.
 front.zip
 
+# Zip del Lambda. Lo arman dos: archive_file en terraform/ y el paso
+# "Empaquetar" del workflow en la raiz. Sin barra, el patron cubre ambos.
+user-token-ms.zip
+
 # Estado de Terraform: guarda EN CLARO la contrasena del usuario demo de
 # Cognito (aws_cognito_user.demo.password). Un "git add -A" sin esto la
 # publicaria en GitHub.

@@ -5,26 +5,16 @@
 # servicio: el cluster, la definicion de task y el servicio que aparecen mas
 # abajo. Fargate NO es otro servicio ni una alternativa a ECS: es uno de sus
 # dos tipos de lanzamiento, o sea quien pone las maquinas donde corren las
-# tasks. Con launch_type = "FARGATE" las pone AWS y tu no ves ninguna; con
+# tasks. Con launch_type = "FARGATE" las pone AWS; con
 # "EC2" las pones tu y las pagas por hora. Aqui se usa el primero, y por eso
 # la palabra Fargate aparece mas abajo en los sitios donde el tipo de
 # lanzamiento cambia el comportamiento (la arquitectura de la imagen, el
 # facturado por task, el error al no poder bajarla de ECR).
 #
-# Reemplaza a beanstalk.tf, que en esta cuenta no se puede usar: tres intentos,
-# tres LaunchWaitCondition agotados a los ~18 minutos, con dos plataformas y dos
-# tipos de instancia distintos. App Runner, la alternativa mas parecida a
-# Beanstalk, esta denegada en el Learner Lab (apprunner:CreateService).
-#
-# La diferencia de fondo: en Beanstalk entregabas un jar y AWS decidia como
-# correrlo; aqui entregas una imagen y declaras tu como corre. Mas piezas a la
-# vista, pero ninguna que pueda quedarse en CREATE_FAILED.
-#
 # SIN BALANCEADOR, a proposito. Un ALB daria una direccion estable, pero cuesta
 # por hora y agrega cuatro recursos a un ejercicio de clase. En su lugar la task
 # sale con IP publica y publicar-ecs.sh reapunta el API Gateway despues de cada
-# despliegue. El precio de esa decision esta abajo, en el grupo de seguridad, y
-# hay que decirlo en voz alta.
+# despliegue.
 #
 # ORDEN DE USO (la imagen tiene que existir antes de que arranque la task):
 #
@@ -64,16 +54,7 @@ data "aws_subnets" "publicas" {
 #
 # La VPC por defecto de este Learner Lab tiene el internet gateway adjunto pero
 # su tabla de rutas principal NO trae la ruta 0.0.0.0/0 hacia el. Una VPC por
-# defecto normal si la trae; esta no. El sintoma no dice nada de rutas:
-#
-#   Fargate   -> ResourceInitializationError: unable to pull registry auth:
-#                There is a connection issue between the task and Amazon ECR
-#   Beanstalk -> "None of the instances are sending data", y a los ~18 minutos
-#                LaunchWaitCondition failed
-#
-# Los dos son lo mismo: la maquina arranca, pero no puede hablar con AWS. Tres
-# intentos de Beanstalk se perdieron persiguiendo la plataforma y el tipo de
-# instancia cuando el problema estaba aqui.
+# defecto normal si la trae; esta no.
 #
 # Se declara como recurso para que quede en codigo y le pase a cualquiera que
 # clone esto. Si la cuenta ya tuviera la ruta, el apply falla con

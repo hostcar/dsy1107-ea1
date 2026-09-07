@@ -39,6 +39,22 @@ resource "aws_cognito_user_pool" "pool" {
     }
   }
 
+  # La version V2 del trigger de tokens solo existe desde el tier Essentials.
+  # Es el default de AWS hoy, pero se fija explicito: si el default cambiara,
+  # el sintoma seria un access token sin scopes y ningun mensaje de error.
+  user_pool_tier = "ESSENTIALS"
+
+  # El puente entre grupos y scopes. Ver lambda.tf y user-token-ms/README.md.
+  lambda_config {
+    pre_token_generation_config {
+      lambda_arn = aws_lambda_function.user_token_ms.arn
+
+      # V1_0 solo sabe agregar claims al ID token. Para tocar el claim scope
+      # del ACCESS token hace falta V2_0, que es lo unico que lee el authorizer.
+      lambda_version = "V2_0"
+    }
+  }
+
   # Nota de costos: el tier por defecto (Essentials) incluye 10.000 usuarios
   # activos al mes en la capa gratuita. Un curso completo no se acerca a eso.
 }
@@ -143,4 +159,70 @@ resource "aws_cognito_user" "demo" {
 
   # No enviar correo de invitacion: el usuario es ficticio.
   message_action = "SUPPRESS"
+}
+
+# =============================================================================
+# LOS PERMISOS: resource server + grupos
+#
+# Aqui esta la asimetria que confunde a todo el mundo la primera vez: en Cognito
+# los scopes NO se asignan a usuarios, se asignan a CLIENTES. El access token
+# lleva la interseccion entre allowed_oauth_scopes del cliente y lo que el front
+# pidio en /authorize. Dos usuarios distintos por el mismo cliente reciben
+# exactamente los mismos scopes.
+#
+# El permiso por persona vive en los GRUPOS. Y no hay nada nativo que conecte
+# grupos con scopes: esa es la razon de existir de user-token-ms.
+# =============================================================================
+
+# Declara que scopes EXISTEN. El nombre real de cada uno es
+# "<identifier>/<scope_name>", o sea "productos/read" y "productos/write".
+resource "aws_cognito_resource_server" "productos" {
+  user_pool_id = aws_cognito_user_pool.pool.id
+  identifier   = "productos"
+  name         = "API de productos"
+
+  scope {
+    scope_name        = "read"
+    scope_description = "Consultar productos"
+  }
+
+  scope {
+    scope_name        = "write"
+    scope_description = "Crear, modificar y eliminar productos"
+  }
+}
+
+# OJO CON LO QUE **NO** HAY AQUI, que es la decision de diseno de todo esto:
+# estos dos scopes NO se agregan a allowed_oauth_scopes del cliente spa.
+#
+# Si estuvieran, cualquier usuario podria pedir productos/write en el
+# /authorize y Cognito se lo daria, porque los scopes del cliente son iguales
+# para todos. Al dejarlos fuera, el token base sale sin ellos y el unico capaz
+# de ponerlos es el Lambda, que si mira quien eres. El front no puede
+# concederse permisos a si mismo ni cambiando el codigo que corre en el
+# navegador.
+
+# -----------------------------------------------------------------------------
+# Los grupos: aqui vive el permiso de cada persona.
+# -----------------------------------------------------------------------------
+
+resource "aws_cognito_user_group" "lectores" {
+  user_pool_id = aws_cognito_user_pool.pool.id
+  name         = "lectores"
+  description  = "Puede consultar productos"
+}
+
+resource "aws_cognito_user_group" "editores" {
+  user_pool_id = aws_cognito_user_pool.pool.id
+  name         = "editores"
+  description  = "Puede crear, modificar y eliminar productos"
+}
+
+# El usuario demo empieza pudiendo solo leer. La demostracion en clase consiste
+# en agregarlo a "editores" desde la consola de Cognito -- sin tocar codigo ni
+# Terraform -- y ver que el mismo POST que devolvia 403 pasa a devolver 201.
+resource "aws_cognito_user_in_group" "demo_lector" {
+  user_pool_id = aws_cognito_user_pool.pool.id
+  username     = aws_cognito_user.demo.username
+  group_name   = aws_cognito_user_group.lectores.name
 }

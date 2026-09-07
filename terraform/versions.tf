@@ -8,6 +8,12 @@ terraform {
       # managed_login_version del dominio de Cognito.
       version = "~> 5.100"
     }
+
+    # Arma el zip del Lambda desde user-token-ms/ sin pasar por un script.
+    archive = {
+      source  = "hashicorp/archive"
+      version = "~> 2.7"
+    }
   }
 }
 

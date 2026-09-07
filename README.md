@@ -97,8 +97,12 @@ cd terraform && terraform destroy
 
 | Archivo                              | Contenido                                                                    |
 |--------------------------------------|------------------------------------------------------------------------------|
-| `terraform/cognito.tf`               | User pool, dominio del Hosted UI, cliente SPA (público, PKCE) y usuario demo |
+| `terraform/cognito.tf`               | User pool, dominio del Hosted UI, cliente SPA (público, PKCE), usuario demo, **grupos y scopes** |
 | `terraform/apigateway.tf`            | La API de 1.1.2 + CORS + **JWT authorizer** + una ruta pública para comparar  |
+| `terraform/lambda.tf`                | Empaqueta y despliega `user-token-ms` y lo engancha al trigger del user pool  |
+| `user-token-ms/index.mjs`            | **Autorización por usuario**: traduce grupos de Cognito a scopes del token    |
+| `user-token-ms/test/`                | Pruebas de la política de acceso (`node --test`, sin dependencias)           |
+| `.github/workflows/user_token_ms_deploy.yml` | Prueba, empaqueta, sube el Lambda y comprueba el artefacto desplegado |
 | `terraform/variables.tf`             | Parámetros con validaciones (el dominio de Cognito es único a nivel mundial)  |
 | `terraform/outputs.tf`               | URLs, IDs y el `config.json` listo para el front                              |
 | `frontend/src/app/auth.service.ts`   | Authorization Code + PKCE escrito a mano: `/authorize`, `/token`, `/logout`   |

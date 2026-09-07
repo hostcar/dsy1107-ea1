@@ -19,7 +19,11 @@ resource "aws_apigatewayv2_api" "api" {
     # El origen de Amplify va SIN barra final: un header Origin nunca la lleva.
     # Es el error espejo del de callback_urls, que si la exige.
     allow_origins = concat(var.origenes_frontend, [local.url_amplify])
-    allow_methods = ["GET", "OPTIONS"]
+
+    # El CRUD de /productos usa los cuatro. Si falta uno aqui, el navegador
+    # cancela la peticion en el preflight y el error no menciona CORS: se ve
+    # como un fallo de red sin mas.
+    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
 
     # "authorization" es el header que obliga al preflight OPTIONS. Si falta
     # aqui, el navegador cancela la peticion antes de enviarla.
@@ -152,26 +156,46 @@ resource "aws_apigatewayv2_integration" "productos_elemento" {
   }
 }
 
-# Las dos rutas van detras del mismo authorizer que /datos: la puerta es una
-# sola, y agregar recursos no agrega maneras de entrar.
-resource "aws_apigatewayv2_route" "productos_coleccion" {
-  api_id    = aws_apigatewayv2_api.api.id
-  route_key = "ANY /productos"
-  target    = "integrations/${aws_apigatewayv2_integration.productos_coleccion.id}"
+# -----------------------------------------------------------------------------
+# UNA RUTA POR METODO, y no "ANY /productos" como estaba antes.
+#
+# authorization_scopes se define POR RUTA. Con "ANY", el GET y el POST comparten
+# la misma ruta y por lo tanto el mismo permiso exigido: no hay forma de pedir
+# read para leer y write para escribir. Separarlas es lo que hace posible la
+# autorizacion por operacion.
+#
+# Las integraciones siguen siendo dos, no cinco: varias rutas pueden apuntar a
+# la misma. Por eso publicar-ecs.sh sigue reapuntando tres integraciones y no
+# hay que tocarlo.
+#
+# Nota sobre la semantica: la lista es un OR, no un AND. Basta que el token
+# traiga UNO de los scopes listados para que la peticion pase.
+# -----------------------------------------------------------------------------
 
-  authorization_type   = "JWT"
-  authorizer_id        = aws_apigatewayv2_authorizer.cognito.id
-  authorization_scopes = ["openid"]
+locals {
+  # metodo y recurso -> permiso exigido. Esta tabla ES la politica de acceso:
+  # se lee de una vez y no hay logica de autorizacion en ninguna otra parte.
+  rutas_productos = {
+    "GET /productos"             = { scope = "productos/read", integracion = aws_apigatewayv2_integration.productos_coleccion.id }
+    "POST /productos"            = { scope = "productos/write", integracion = aws_apigatewayv2_integration.productos_coleccion.id }
+    "GET /productos/{proxy+}"    = { scope = "productos/read", integracion = aws_apigatewayv2_integration.productos_elemento.id }
+    "PUT /productos/{proxy+}"    = { scope = "productos/write", integracion = aws_apigatewayv2_integration.productos_elemento.id }
+    "DELETE /productos/{proxy+}" = { scope = "productos/write", integracion = aws_apigatewayv2_integration.productos_elemento.id }
+  }
 }
 
-resource "aws_apigatewayv2_route" "productos_elemento" {
+# Todas detras del mismo authorizer que /datos: la puerta es una sola, y agregar
+# recursos no agrega maneras de entrar.
+resource "aws_apigatewayv2_route" "productos" {
+  for_each = local.rutas_productos
+
   api_id    = aws_apigatewayv2_api.api.id
-  route_key = "ANY /productos/{proxy+}"
-  target    = "integrations/${aws_apigatewayv2_integration.productos_elemento.id}"
+  route_key = each.key
+  target    = "integrations/${each.value.integracion}"
 
   authorization_type   = "JWT"
   authorizer_id        = aws_apigatewayv2_authorizer.cognito.id
-  authorization_scopes = ["openid"]
+  authorization_scopes = [each.value.scope]
 }
 
 resource "aws_apigatewayv2_stage" "default" {
