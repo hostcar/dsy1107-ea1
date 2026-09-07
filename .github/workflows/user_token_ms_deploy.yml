@@ -1,0 +1,144 @@
+name: User Token MS Deploy
+
+# Despliegue del Lambda que decide los scopes de cada usuario.
+#
+# QUIEN MANDA SOBRE QUE, que es la misma pregunta que en backend_deploy.yml
+# pero con una respuesta distinta:
+#
+#   Terraform  -> que el Lambda EXISTA y este enganchado al user pool: el rol,
+#                 el runtime, el trigger V2_0, el permiso de invocacion. Es
+#                 lambda.tf.
+#   Este flujo -> que CODIGO corre dentro.
+#
+# La diferencia con ECS es que aqui NO hace falta ignore_changes. Las dos
+# herramientas empaquetan el MISMO archivo del repositorio (archive_file lee
+# user-token-ms/index.mjs, y este flujo tambien), asi que convergen en vez de
+# pisarse. Si "terraform plan" propone cambiar el codigo del Lambda es porque
+# de verdad difiere del repositorio, y eso es informacion util, no ruido.
+#
+# Un fallo aqui no se ve como un fallo: el login sigue funcionando y los tokens
+# salen con los permisos equivocados. Por eso el flujo prueba antes de subir y
+# comprueba despues de haber subido.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'user-token-ms/**'
+      - '.github/workflows/user_token_ms_deploy.yml'
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Dos despliegues simultaneos sobre la misma funcion se pisan: el segundo sube
+# su zip mientras el primero todavia espera a que AWS termine de aplicar el suyo.
+concurrency:
+  group: user-token-ms-deploy
+  cancel-in-progress: false
+
+jobs:
+  lambda:
+    name: user-token-ms
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      # En duro y no en una variable del repositorio, a diferencia de ECR_REPO o
+      # API_ID: el nombre sale de "user-token-ms-${var.estudiante}" en lambda.tf
+      # y no lleva dentro ni el account_id ni la region, asi que SOBREVIVE a la
+      # rotacion de cuenta del Learner Lab. No hay nada que resincronizar.
+      #
+      # Si clonas este repo para otro estudiante, este es el valor que cambia.
+      FUNCION: user-token-ms-rivera
+
+    defaults:
+      run:
+        working-directory: user-token-ms
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # La misma version mayor que el runtime del Lambda (nodejs22.x en
+      # lambda.tf). Si se separan, las pruebas pasan en una y el codigo corre
+      # en otra.
+      - name: Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Sin dependencias ni package.json: node:test viene en la stdlib.
+      - name: Pruebas
+        run: node --test
+
+      # Solo index.mjs, igual que archive_file en lambda.tf. Si aqui entrara
+      # test/ el artefacto dejaria de ser el mismo que despliega Terraform.
+      - name: Empaquetar
+        run: zip -j ../user-token-ms.zip index.mjs
+
+      - name: Credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Subir el codigo
+        working-directory: .
+        run: |
+          set -euo pipefail
+
+          aws lambda update-function-code \
+            --function-name "$FUNCION" \
+            --zip-file fileb://user-token-ms.zip \
+            --query 'CodeSha256' --output text
+
+          # update-function-code devuelve antes de que el codigo este activo.
+          # Sin esta espera, el invoke de abajo puede ejecutar todavia el
+          # codigo viejo y dar por buena una version que no es la que se subio.
+          aws lambda wait function-updated --function-name "$FUNCION"
+
+      # Las pruebas de arriba validan el FUENTE. Esta valida el ARTEFACTO
+      # DESPLEGADO: que el zip llego, que el handler resuelve y que la politica
+      # de acceso es la esperada en la cuenta de verdad.
+      - name: Comprobar el Lambda desplegado
+        working-directory: .
+        run: |
+          set -euo pipefail
+
+          cat > evento.json <<'JSON'
+          {
+            "version": "2",
+            "triggerSource": "TokenGeneration_HostedAuth",
+            "userName": "smoke-test",
+            "request": {
+              "userAttributes": { "email": "smoke@ci" },
+              "groupConfiguration": { "groupsToOverride": ["editores"] }
+            },
+            "response": {}
+          }
+          JSON
+
+          aws lambda invoke \
+            --function-name "$FUNCION" \
+            --payload fileb://evento.json \
+            --cli-read-timeout 30 \
+            salida.json > /dev/null
+
+          scopes=$(jq -c '.response.claimsAndScopeOverrideDetails.accessTokenGeneration.scopesToAdd' salida.json)
+          echo "scopes de un editor: $scopes"
+
+          if [ "$scopes" != '["productos/read","productos/write"]' ]; then
+            echo "::error::El Lambda desplegado no concede los scopes esperados: $scopes"
+            jq . salida.json
+            exit 1
+          fi
+
+          {
+            echo "### user-token-ms desplegado"
+            echo ""
+            echo "Un usuario del grupo \`editores\` recibe: \`${scopes}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

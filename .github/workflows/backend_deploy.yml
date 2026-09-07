@@ -1,0 +1,247 @@
+name: Backend Deploy
+
+# Despliegue del backend en ECS con los actions oficiales de AWS.
+#
+# QUIEN MANDA SOBRE QUE, porque aqui hay dos herramientas tocando el mismo
+# servicio y sin este reparto se pisan:
+#
+#   Terraform  -> la task definition BASE: cuanta CPU, que rol, que variables de
+#                 entorno, que plataforma. Es ecs.tf.
+#   Este flujo -> que IMAGEN corre. Descarga la ultima revision que registro
+#                 Terraform, le cambia solo la imagen y registra una revision
+#                 nueva.
+#
+# Por eso aws_ecs_service.backend lleva ignore_changes = [task_definition] en
+# ecs.tf: sin eso, el siguiente "terraform apply" devolveria el servicio a su
+# propia revision y el despliegue se perderia sin que nada falle a la vista.
+#
+# La consecuencia practica: si cambias una variable de entorno en ecs.tf, hay
+# que aplicar Terraform Y LUEGO correr este flujo. El apply registra la revision
+# nueva; este flujo es el que se la pone al servicio.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - '.github/workflows/backend_deploy.yml'
+
+  # Redesplegar sin tocar codigo. Hace falta mas seguido de lo que parece: sin
+  # balanceador, la IP de la task cambia cada vez que ECS la recicla, y hay que
+  # reapuntar el API Gateway.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Dos despliegues a la vez sobre el mismo servicio se pisan: el segundo
+# reapunta el gateway a una task que el primero esta a punto de reemplazar.
+# cancel-in-progress en false: al que ya empezo se le deja terminar.
+concurrency:
+  group: backend-deploy
+  cancel-in-progress: false
+
+jobs:
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      # El nombre del contenedor dentro de la task definition. Tiene que
+      # coincidir con el "name" del container_definitions de ecs.tf: es la llave
+      # con la que render-task-definition encuentra donde poner la imagen.
+      CONTENEDOR: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Java 21: el mismo de java.version en el pom, de la imagen base del
+      # Dockerfile y del runtime_platform de ecs.tf. Los cuatro se mueven juntos.
+      - name: Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build
+        working-directory: backend
+        run: mvn --batch-mode --no-transfer-progress package -DskipTests
+
+      # Una etiqueta por despliegue, y es lo que hace posible volver atras: con
+      # solo :latest no se puede saber que esta corriendo ni a que version
+      # regresar. La revision de la task definition queda clavada a esta.
+      - name: Etiqueta de esta version
+        id: version
+        run: echo "tag=v$(date +%Y%m%d-%H%M%S)" >> "$GITHUB_OUTPUT"
+
+      - name: Credenciales de AWS
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # El Learner Lab entrega credenciales TEMPORALES: las tres, incluido
+          # el session token, y caducan al cerrar la sesion del lab. Hay que
+          # recargarlas como secretos cada vez. No sirve una llave permanente
+          # porque el lab no deja crear usuarios de IAM.
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-session-token: ${{ secrets.AWS_SESSION_TOKEN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Solo autentica el cliente Docker. Ademas enmascara la contrasena en los
+      # logs, que es lo que un "get-login-password | docker login" a mano no
+      # hace.
+      - name: Login en ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # --platform linux/amd64 es nativo en ubuntu-latest, que ya es x86_64. La
+      # bandera esta igual porque debe coincidir con el runtime_platform de
+      # ecs.tf, y porque este mismo Dockerfile se construye tambien en Macs con
+      # Apple Silicon, donde sin ella la imagen sale arm64 y la task muere con
+      # "exec format error".
+      - name: Construir y subir la imagen
+        env:
+          REPO: ${{ vars.ECR_REPO }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          docker build --platform linux/amd64 -t "$REPO:$TAG" -t "$REPO:latest" backend
+          docker push "$REPO:$TAG"
+          docker push "$REPO:latest"
+
+      # -----------------------------------------------------------------------
+      # La task definition base sale de AWS, no de un JSON versionado en el
+      # repositorio.
+      #
+      # Es la diferencia que hace que esto conviva con Terraform. El ejemplo
+      # habitual del action guarda un task-definition.json en el repo, y eso
+      # aqui crearia un segundo dueno del recurso: Terraform registraria una
+      # revision con sus variables de entorno y el flujo otra con las del JSON,
+      # y el servicio iria rebotando entre las dos.
+      #
+      # Preguntando por FAMILIA se obtiene la ultima revision ACTIVA, que es la
+      # que registro Terraform. Asi cualquier cambio de ecs.tf entra solo en el
+      # despliegue siguiente.
+      #
+      # Los campos que se quitan son de solo lectura: describe los devuelve y
+      # register-task-definition los rechaza.
+      # -----------------------------------------------------------------------
+      - name: Descargar la task definition que mantiene Terraform
+        env:
+          FAMILIA: ${{ vars.ECS_SERVICE }}
+        run: |
+          set -euo pipefail
+          aws ecs describe-task-definition --task-definition "$FAMILIA" \
+            --query taskDefinition --output json \
+            | jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes,
+                      .compatibilities, .registeredAt, .registeredBy, .deregisteredAt)' \
+            > task-definition.json
+
+          echo "Base: $(jq -r '.containerDefinitions[0].image' task-definition.json)"
+
+      - name: Poner la imagen nueva
+        id: render
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: task-definition.json
+          container-name: ${{ env.CONTENEDOR }}
+          image: ${{ vars.ECR_REPO }}:${{ steps.version.outputs.tag }}
+
+      # Registra la revision y actualiza el servicio. wait-for-service-stability
+      # es lo que convierte "se envio el despliegue" en "el despliegue funciono":
+      # sin eso el paso termina en verde aunque la task entre en crashloop.
+      - name: Desplegar en ECS
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.render.outputs.task-definition }}
+          service: ${{ vars.ECS_SERVICE }}
+          cluster: ${{ vars.ECS_CLUSTER }}
+          wait-for-service-stability: true
+
+      # -----------------------------------------------------------------------
+      # Esto no lo hace ningun action, y es lo que conecta el gateway con el
+      # backend.
+      #
+      # Sin balanceador, la direccion del backend es la IP publica de la task, y
+      # cambia en cada despliegue. Las TRES integraciones apuntan a la misma
+      # task, cada una a su ruta. Olvidar una no rompe nada a la vista: esa ruta
+      # sigue respondiendo, pero contra la IP de la task anterior, que ya no
+      # existe.
+      #
+      # La IP no se pregunta directo: la task expone una interfaz de red (ENI) y
+      # la IP cuelga de esa interfaz. Son tres saltos.
+      # -----------------------------------------------------------------------
+      - name: Reapuntar el API Gateway
+        env:
+          CLUSTER: ${{ vars.ECS_CLUSTER }}
+          SERVICIO: ${{ vars.ECS_SERVICE }}
+          API_ID: ${{ vars.API_ID }}
+          INT_DATOS: ${{ vars.INTEGRATION_ID }}
+          INT_PROD_COL: ${{ vars.INTEGRATION_PRODUCTOS_COL_ID }}
+          INT_PROD_ELE: ${{ vars.INTEGRATION_PRODUCTOS_ELE_ID }}
+        run: |
+          set -euo pipefail
+
+          TAREA="$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$SERVICIO" \
+            --desired-status RUNNING --query "taskArns[0]" --output text)"
+
+          ENI="$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TAREA" \
+            --query "tasks[0].attachments[0].details[?name=='networkInterfaceId'].value" \
+            --output text)"
+
+          IP="$(aws ec2 describe-network-interfaces --network-interface-ids "$ENI" \
+            --query "NetworkInterfaces[0].Association.PublicIp" --output text)"
+
+          if [ -z "$IP" ] || [ "$IP" = "None" ]; then
+            echo "::error::No se pudo resolver la IP publica de la task ($TAREA)."
+            exit 1
+          fi
+
+          reapuntar() {  # $1 = id de la integracion, $2 = ruta en el backend
+            aws apigatewayv2 update-integration \
+              --api-id "$API_ID" --integration-id "$1" \
+              --integration-uri "http://${IP}:8080$2" >/dev/null
+          }
+
+          reapuntar "$INT_DATOS"    "/datos"
+          reapuntar "$INT_PROD_COL" "/productos"
+          # La llave de {proxy} tiene que llegar literal al API Gateway, que es
+          # quien la sustituye por el trozo de ruta que capturo {proxy+}.
+          reapuntar "$INT_PROD_ELE" "/productos/{proxy}"
+
+          echo "IP=$IP" >> "$GITHUB_ENV"
+          echo "Las tres integraciones apuntan a $IP."
+
+      - name: Resumen
+        if: always()
+        env:
+          API_URL: ${{ vars.API_URL }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          {
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "### Backend desplegado: \`$TAG\`"
+              echo ""
+              echo "| Ruta | URL |"
+              echo "|------|-----|"
+              echo "| Indicadores | ${API_URL}/datos |"
+              echo "| Productos   | ${API_URL}/productos |"
+              echo ""
+              echo "Las dos exigen \`Authorization: Bearer <access_token>\`."
+              echo ""
+              echo "Backend directo (sin token): \`http://${IP:-?}:8080/actuator/health\`"
+              echo ""
+              echo "Para volver atras, la revision anterior sigue registrada:"
+              echo '```'
+              echo "aws ecs update-service --cluster ${{ vars.ECS_CLUSTER }} \\"
+              echo "  --service ${{ vars.ECS_SERVICE }} --task-definition ${{ vars.ECS_SERVICE }}:<revision>"
+              echo '```'
+            else
+              echo "### El despliegue fallo"
+              echo ""
+              echo '```'
+              echo "aws logs tail /ecs/${{ vars.ECS_SERVICE }} --follow"
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

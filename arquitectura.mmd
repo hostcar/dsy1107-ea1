@@ -1,0 +1,76 @@
+%% DSY1107 - Desarrollo Cloud Native I - EA1 (RA1: API Manager + IDaaS)
+%% Arquitectura de la solucion FullStack construida entre las actividades 1.1 y 1.3.
+
+%% Se lee siguiendo los numeros:
+%%   1-5  el login (Authorization Code + PKCE) y de donde salen los permisos
+%%   6-9  una peticion autorizada, y donde se corta si no lo esta
+
+%% La idea central del diagrama: el permiso nace en un GRUPO de Cognito, lo
+%% traduce a scope el Lambda user-token-ms, viaja dentro del access token y lo
+%% hace cumplir el API Gateway. El backend no tiene codigo de autorizacion.
+
+flowchart LR
+    usuario(["Usuario"])
+    externo["mindicador.cl<br/>API publica de terceros"]
+
+    subgraph navegador["Navegador"]
+        spa["SPA Angular 22 zoneless<br/>auth.service.ts: PKCE a mano<br/>token.interceptor.ts: header Authorization"]
+    end
+
+    subgraph aws["AWS - cuenta del Learner Lab"]
+
+        subgraph idaas["IDaaS - Amazon Cognito"]
+            hosted["Hosted UI / servidor de autorizacion<br/>/oauth2/authorize · /oauth2/token · /oauth2/userInfo"]
+            pool[("User pool<br/>usuarios, y los GRUPOS<br/>que son el permiso:<br/>lectores · editores")]
+            lambda["user-token-ms<br/>Lambda, Pre Token Generation V2<br/>traduce GRUPOS a SCOPES"]
+            jwks["JWKS<br/>/.well-known/jwks.json<br/>claves publicas de firma"]
+        end
+
+        subgraph manager["API Manager - API Gateway HTTP API"]
+            authorizer{{"JWT Authorizer<br/>verifica firma, issuer,<br/>audiencia y expiracion"}}
+            rutas["Rutas con authorization_scopes<br/>GET /productos requiere productos/read<br/>POST · PUT · DELETE requieren productos/write<br/>GET /publico/datos sin proteccion, para contrastar"]
+        end
+
+        subgraph computo["Computo y datos"]
+            amplify["AWS Amplify<br/>hosting del bundle del front"]
+            backend["Backend Spring Boot 4.1 / Java 21<br/>ECS Fargate, sin balanceador<br/>proxy con cache TTL + CRUD JPA<br/>NO valida el token: de eso vive el authorizer"]
+            rds[("PostgreSQL 17 en RDS<br/>sslmode=require obligatorio<br/>esquema gobernado por Flyway")]
+        end
+
+    end
+
+    %% --- Login -----------------------------------------------------------
+    amplify -. "sirve el bundle" .-> spa
+    usuario -- "1 - abre la app y pulsa Entrar" --> spa
+    spa -- "2 - redirige a /authorize con code_challenge" --> hosted
+    hosted <-- "3 - autentica contra el directorio" --> pool
+    hosted -- "4 - antes de firmar, invoca el trigger" --> lambda
+    lambda -- "scopesToAdd segun los grupos" --> hosted
+    hosted -- "5 - code por tokens (+ code_verifier)<br/>access token con el claim scope<br/>id token con quien eres" --> spa
+
+    %% --- Peticion autorizada ---------------------------------------------
+    spa -- "6 - Authorization: Bearer access_token" --> authorizer
+    authorizer -. "una sola vez: descarga y cachea las claves" .-> jwks
+    authorizer -- "7 - token valido" --> rutas
+    rutas -- "8 - el scope alcanza para esta ruta" --> backend
+    backend -- "9a - solo si la cache expiro" --> externo
+    backend -- "9b - CRUD de /productos" --> rds
+
+    %% --- Donde se corta ---------------------------------------------------
+    authorizer -- "401 sin token o token invalido" --> spa
+    rutas -- "403 el token no trae el scope<br/>NUNCA llega al backend" --> spa
+
+    classDef zonaIdaas fill:#f3e8ff,stroke:#7e22ce,color:#3b0764
+    classDef zonaManager fill:#dbeafe,stroke:#1d4ed8,color:#172554
+    classDef zonaComputo fill:#dcfce7,stroke:#15803d,color:#052e16
+    classDef zonaCliente fill:#fef3c7,stroke:#b45309,color:#451a03
+    classDef zonaExterna fill:#f1f5f9,stroke:#64748b,color:#0f172a
+    classDef clave stroke-width:3px
+
+    class hosted,pool,jwks zonaIdaas
+    class lambda zonaIdaas
+    class authorizer,rutas zonaManager
+    class amplify,backend,rds zonaComputo
+    class spa,usuario zonaCliente
+    class externo zonaExterna
+    class lambda,rutas clave
