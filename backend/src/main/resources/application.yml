@@ -62,6 +62,34 @@ spring:
     # que deberian saltar como error en la capa de servicio.
     open-in-view: false
 
+  # ---------------------------------------------------------------------------
+  # RabbitMQ: el broker al que se publica "solicitud creada".
+  #
+  # En local lo levanta docker-compose.yml de la raiz del repositorio
+  # (localhost:5672, panel en http://localhost:15672 con guest/guest). En un
+  # despliegue real estos tres valores llegan por variable de entorno, igual
+  # que los de la base:
+  #
+  #   SPRING_RABBITMQ_HOST, SPRING_RABBITMQ_USERNAME, SPRING_RABBITMQ_PASSWORD
+  #
+  # OJO: que esto apunte a un broker que no existe NO impide arrancar. La
+  # conexion es perezosa; el fallo aparece al publicar, no al arrancar, y por
+  # eso las pruebas corren sin Docker.
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+
+    # Le pide al broker que DEVUELVA el mensaje que no pudo enrutar a ninguna
+    # cola, en vez de descartarlo en silencio. Las dos lineas van juntas:
+    # mandatory marca el mensaje, publisher-returns enciende el callback que lo
+    # recibe (MensajeriaConfig.avisarMensajesNoEnrutados).
+    publisher-returns: true
+    template:
+      mandatory: true
+
   flyway:
     # El esquema vive en db/migration y se aplica al arrancar, tambien en las
     # pruebas: la migracion esta escrita en SQL portable justamente para eso.
@@ -103,6 +131,36 @@ backend:
       - libra_cobre
       - tasa_desempleo
       - bitcoin
+
+  # ---------------------------------------------------------------------------
+  # Los nombres de la topologia. Estos MISMOS literales estan en el
+  # application.yml de notificaciones-ms: son el contrato entre los dos
+  # procesos. Si uno cambia y el otro no, el mensaje se publica, el exchange no
+  # encuentra binding y el aviso se pierde (con el log de mensaje no enrutado
+  # como unica pista).
+  # ---------------------------------------------------------------------------
+  mensajeria:
+    # rabbit | sqs
+    #
+    # rabbit es el ejercicio de la EA2 y no necesita nada de AWS: el broker lo
+    # levanta docker-compose.yml. sqs es la cola administrada que crea
+    # terraform/sqs.tf, y existe porque el Learner Lab no tiene Amazon MQ.
+    #
+    #   BACKEND_MENSAJERIA_MOTOR=sqs \
+    #   SQS_COLA_URL="$(terraform -chdir=../terraform output -raw sqs_cola_url)" \
+    #   ./mvnw spring-boot:run
+    motor: ${BACKEND_MENSAJERIA_MOTOR:rabbit}
+
+    # --- solo con motor=rabbit -------------------------------------------------
+    exchange: solicitudes.exchange
+    routing-key: solicitud.creada
+
+    # --- solo con motor=sqs ----------------------------------------------------
+    # Vacia a proposito: no hay valor por defecto sensato. La URL lleva dentro el
+    # id de la cuenta, y la cuenta del Learner Lab ROTA entre sesiones, asi que
+    # cualquier valor escrito aqui estaria mal la semana siguiente. Sale de
+    # Terraform.
+    cola-url: ${SQS_COLA_URL:}
 
   cors:
     # Solo para el modo local, apuntando el front derecho al :8080. En el

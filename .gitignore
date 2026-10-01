@@ -29,5 +29,8 @@ terraform/*.tfvars
 # Artefactos de build
 frontend/dist/
 backend/target/
+notificaciones-ms/target/
+hola-rabbitmq/target/
+logs-rabbitmq/target/
 
 .DS_Store

@@ -51,7 +51,10 @@ class IndicadoresServiceTest {
         BackendProperties props = new BackendProperties(
                 new BackendProperties.Mindicador(URL, TTL, Duration.ofSeconds(3), Duration.ofSeconds(10),
                         List.of("uf", "dolar", "utm")),
-                new BackendProperties.Cors(List.of("http://localhost:4200")));
+                new BackendProperties.Cors(List.of("http://localhost:4200")),
+                // Esta prueba no toca la cola; los nombres van para que el record
+                // quede completo.
+                new BackendProperties.Mensajeria("rabbit", "solicitudes.exchange", "solicitud.creada", null));
 
         servicio = new IndicadoresService(builder.build(), new CacheTtl(reloj, TTL), props);
     }

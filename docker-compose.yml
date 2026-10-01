@@ -1,0 +1,95 @@
+# =============================================================================
+# Las tres piezas de infraestructura que el ejercicio de colas necesita en la
+# maquina del estudiante. Ninguna es AWS: el ejercicio corre entero en local.
+#
+#   docker compose up -d      levantarlas
+#   docker compose ps         ver que estan sanas
+#   docker compose down -v    apagarlas Y BORRAR los datos (colas incluidas)
+#
+# El -v del down importa: sin el, las colas declaradas siguen ahi con sus
+# argumentos viejos, y si entremedio se cambio un x-dead-letter-*, el arranque
+# siguiente falla con PRECONDITION_FAILED - inequivalent arg. Con -v se parte
+# de cero.
+# =============================================================================
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # El broker.
+  #
+  # La etiqueta -management no es un lujo: trae el panel web, que es donde se
+  # VE el ejercicio (colas, mensajes encolados, el cuerpo de un mensaje muerto
+  # en la DLQ). Sin panel, todo esto pasa a ser un log.
+  #
+  #   http://localhost:15672   guest / guest
+  # ---------------------------------------------------------------------------
+  rabbitmq:
+    # Desde ECR Public y no desde Docker Hub: Docker Hub limita las descargas
+    # anonimas por IP, y una sala con 40 personas descargando a la vez recibe
+    # 429 y la clase se detiene. Es la misma razon que explica el FROM del
+    # Dockerfile del backend.
+    image: public.ecr.aws/docker/library/rabbitmq:4-management
+    container_name: dsy1107-rabbitmq
+    ports:
+      - "5672:5672"      # AMQP: por aqui hablan el backend y notificaciones-ms
+      - "15672:15672"    # el panel web
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    healthcheck:
+      # "esta arriba el puerto" no basta: RabbitMQ acepta conexiones TCP varios
+      # segundos antes de estar listo para declarar colas. El diagnostico
+      # pregunta por el nodo de verdad.
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ---------------------------------------------------------------------------
+  # El servidor de correo de mentira.
+  #
+  # Habla SMTP de verdad en el puerto 1025, acepta cualquier correo, no entrega
+  # ninguno, y los muestra todos en una bandeja web:
+  #
+  #   http://localhost:8025
+  #
+  # Es la pieza que hace demostrable el ejercicio sin pedirle a nadie una cuenta
+  # de correo ni arriesgarse a mandarle un aviso real a un tercero.
+  # ---------------------------------------------------------------------------
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: dsy1107-mailpit
+    ports:
+      - "1025:1025"      # SMTP
+      - "8025:8025"      # la bandeja web
+    environment:
+      MP_MAX_MESSAGES: 500
+      MP_SMTP_AUTH_ACCEPT_ANY: 1
+      MP_SMTP_AUTH_ALLOW_INSECURE: 1
+
+  # ---------------------------------------------------------------------------
+  # La base del backend, en local.
+  #
+  # POR QUE NO SE USA EL RDS DE LA EA1 PARA ESTE EJERCICIO: ese PostgreSQL es
+  # uno solo y lo comparte el curso entero. Cuarenta personas aplicando la misma
+  # migracion nueva sobre la misma base terminan en un "Migration checksum
+  # mismatch" que no tiene nada que ver con lo que estan aprendiendo. Aqui cada
+  # uno tiene la suya, vacia, y la puede borrar cuando quiera.
+  #
+  # Es PostgreSQL 17, la misma version que rds.tf.
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: public.ecr.aws/docker/library/postgres:17-alpine
+    container_name: dsy1107-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: dsy1107
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dsy1107"]
+      interval: 5s
+      timeout: 5s
+      retries: 10

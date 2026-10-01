@@ -1,0 +1,12 @@
+# El perfil con el que corren las pruebas (lo activa surefire desde el pom.xml).
+#
+# Apaga el listener. Sin esto, cada @SpringBootTest intentaria conectarse a un
+# RabbitMQ que en el servidor de integracion continua no existe, y la suite se
+# llenaria de reintentos de conexion. Que el mensaje viaje de verdad por el
+# broker se comprueba en vivo, con docker compose.
+
+spring:
+  rabbitmq:
+    listener:
+      simple:
+        auto-startup: false

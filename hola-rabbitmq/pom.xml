@@ -1,0 +1,119 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>4.1.1</version>
+        <relativePath/>
+    </parent>
+    <groupId>cl.duoc.dsy1107</groupId>
+    <artifactId>hola-rabbitmq</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>hola-rabbitmq</name>
+    <description>DSY1107 EA2 - actividad 2.1.2: cola, productor y consumidor basicos (Hello World)</description>
+
+    <properties>
+        <!-- La guia dice Java 11 y Spring Boot 3.1. Esa combinacion no existe:
+             Boot 3 exige Java 17 como minimo. Aqui va lo mismo que el resto del
+             repositorio. -->
+        <java.version>21</java.version>
+    </properties>
+
+    <dependencies>
+        <!-- RabbitTemplate, @RabbitListener y la declaracion de colas. Es la
+             "Spring AMQP" que la guia pide marcar en start.spring.io. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- Solo para el paso 9 (MessageController). Sin el, el Hello World
+             funciona igual desde el menu de la consola. -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- RabbitListenerTestHarness: deja a la prueba e2e ver que argumentos
+             recibio el @RabbitListener. De Receiver solo necesita el id. -->
+        <dependency>
+            <groupId>org.springframework.amqp</groupId>
+            <artifactId>spring-rabbit-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>hola-rabbitmq</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+            <!-- Las pruebas corren con el perfil "pruebas", que apaga el
+                 listener: asi no necesitan un RabbitMQ levantado. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <spring.profiles.active>pruebas</spring.profiles.active>
+                    </systemPropertyVariables>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
+    <!-- La prueba de punta a punta (EnvioYRecepcionIT) contra el RabbitMQ REAL
+         del docker-compose.yml. No corre con un "./mvnw verify" normal ni en la
+         CI, porque ahi no hay broker. Se pide a proposito:
+
+           docker compose up -d rabbitmq      (desde la raiz del repo)
+           ./mvnw verify -Pe2e
+
+         Las clases *IT las ignora surefire (el de las pruebas unitarias) y las
+         toma failsafe, que solo se activa con este perfil. -->
+    <profiles>
+        <profile>
+            <id>e2e</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-failsafe-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <goals>
+                                    <goal>integration-test</goal>
+                                    <goal>verify</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <!-- Sin el perfil "pruebas": aqui el listener SI
+                                 tiene que estar encendido. -->
+                            <systemPropertyVariables>
+                                <e2e.pausa>${e2e.pausa}</e2e.pausa>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+            <properties>
+                <!-- Cuanto se queda el mensaje en la cola, con el consumidor
+                     detenido, para alcanzar a verlo en el panel. Ej.: -De2e.pausa=15 -->
+                <e2e.pausa>0</e2e.pausa>
+            </properties>
+        </profile>
+    </profiles>
+
+</project>

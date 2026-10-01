@@ -19,6 +19,13 @@ renombras una, el pipeline deja de compilar.
 │   ├── src/                # código
 │   ├── public/             # estáticos; aquí se escribe config.json en despliegue
 │   └── package.json        # dependencias y scripts npm
+├── notificaciones-ms/      # microservicio consumidor de RabbitMQ (EA2)
+│   ├── src/main/java/      # topología, consumidor y envío de correo
+│   ├── src/test/java/      # pruebas (no necesitan broker ni SMTP)
+│   └── pom.xml
+├── hola-rabbitmq/          # actividad 2.1.2: Hello World con la cola "hello" (EA2)
+├── logs-rabbitmq/          # actividad 2.1.3: logs enrutados por nivel con un direct exchange (EA2)
+├── docker-compose.yml      # RabbitMQ + Mailpit + PostgreSQL para el ejercicio de colas
 ├── terraform/              # infraestructura como código (AWS)
 │   ├── cognito.tf          # IDaaS: user pool, cliente, dominio
 │   ├── apigateway.tf       # API Manager: rutas y autorizador JWT
@@ -27,6 +34,7 @@ renombras una, el pipeline deja de compilar.
 │   └── outputs.tf          # datos que consume el frontend (ids, URLs)
 ├── scripts/                # automatización del despliegue
 ├── .gitignore
+├── EJERCICIO-solicitudes-correo.md   # la guía del ejercicio de colas (EA2)
 └── README.md               # qué hace tu solución y cómo levantarla
 ```
 
@@ -42,6 +50,9 @@ se evalúa como infraestructura no entregada.
 | `frontend/`  | La aplicación Angular que hace el login contra Cognito.       | `node_modules/`, `dist/`, el `config.json` generado.      |
 | `terraform/` | Los `.tf` que crean la infraestructura, y `*.tfvars.example`. | `.terraform/`, `terraform.tfstate`, tus `.tfvars` reales. |
 | `scripts/`   | Scripts de apoyo al despliegue, ejecutables (`chmod +x`).     | Claves de AWS incrustadas en el código.                   |
+| `notificaciones-ms/` | El consumidor de la cola: lee `solicitudes.creadas` y manda el correo al aprobador. | `target/`, credenciales de SMTP. |
+| `hola-rabbitmq/` | El Hello World de la 2.1.2: productor y consumidor de la cola `hello`, en un solo proceso. | `target/`. |
+| `logs-rabbitmq/` | El backend de la 2.1.3: un direct exchange que enruta los logs por nivel a dos colas. | `target/`, el frontend Vite. |
 
 ## Secretos del repositorio
 
@@ -98,6 +109,9 @@ construye las insignias a partir de él. Nombres exactos:
 | `frontend_deploy.yml`  | Publica el frontend compilado en Amplify.    | Manual o push a `main`.       |
 | `backend_compile.yml`  | Compila y prueba el backend con Maven.       | Push que toque `backend/**`.  |
 | `backend_deploy.yml`   | Construye la imagen y la publica en Fargate. | Manual o push a `main`.       |
+| `notificaciones_compile.yml` | Compila y **prueba** el consumidor de la cola. | Push que toque `notificaciones-ms/**`. |
+| `hola_rabbitmq_compile.yml` | Compila y prueba el Hello World de la 2.1.2. | Push que toque `hola-rabbitmq/**`. |
+| `logs_rabbitmq_compile.yml` | Compila y prueba el backend de logs de la 2.1.3. | Push que toque `logs-rabbitmq/**`. |
 
 Los de despliegue son los que consumen los secretos de la sección anterior. Un pipeline que nunca se ha ejecutado
 aparece como `no status`, igual que si no existiera: haz al menos un push que lo dispare para comprobar que quedó bien.

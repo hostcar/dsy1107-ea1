@@ -1,0 +1,47 @@
+# =============================================================================
+# DSY1107 - EA2 - Actividad 2.1.2 - Hello World con RabbitMQ.
+#
+# El broker lo levanta el docker-compose.yml de la raiz del repositorio:
+#
+#   docker compose up -d rabbitmq
+#
+# Panel: http://localhost:15672 (guest / guest)
+# =============================================================================
+
+spring:
+  application:
+    name: hola-rabbitmq
+
+  rabbitmq:
+    # Tienen que coincidir con docker-compose.yml.
+    #
+    # guest/guest es cosa del contenedor de Docker. Un RabbitMQ instalado a mano
+    # solo acepta a guest desde localhost y lo rechaza desde otra maquina con un
+    # ACCESS_REFUSED que parece contrasena equivocada. La imagen oficial de Docker
+    # apaga esa proteccion (loopback_users.guest = false): por eso aqui funciona,
+    # y por eso mismo un contenedor con guest/guest no se expone a internet.
+    host: ${SPRING_RABBITMQ_HOST:localhost}
+    port: ${SPRING_RABBITMQ_PORT:5672}
+    username: ${SPRING_RABBITMQ_USERNAME:guest}
+    password: ${SPRING_RABBITMQ_PASSWORD:guest}
+    virtual-host: /
+
+    # Reintentos del PRODUCTOR: si el broker no responde al enviar, el
+    # RabbitTemplate espera 1 s, 2 s, 4 s... antes de rendirse.
+    #
+    # En la guia esto aparece como "amqp.template.retry", que Spring ignora sin
+    # avisar. La clave correcta cuelga de spring.rabbitmq.
+    template:
+      retry:
+        enabled: true
+        initial-interval: 1s
+        max-interval: 30s
+        multiplier: 2.0
+        max-attempts: 3
+
+server:
+  # 8090: el 8080 es del backend de la EA1 y el 8081 de notificaciones-ms, y
+  # los tres pueden estar corriendo a la vez en la misma maquina. Si dos
+  # comparten puerto, el segundo en arrancar muere con "Port ... was already in
+  # use" antes de conectarse siquiera a RabbitMQ.
+  port: 8090

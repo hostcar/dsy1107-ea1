@@ -3,6 +3,7 @@ package cl.duoc.dsy1107.ae1.web;
 import cl.duoc.dsy1107.ae1.indicadores.IndicadorDesconocidoException;
 import cl.duoc.dsy1107.ae1.indicadores.OrigenNoDisponibleException;
 import cl.duoc.dsy1107.ae1.productos.ProductoNoEncontradoException;
+import cl.duoc.dsy1107.ae1.solicitudes.SolicitudNoEncontradaException;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -69,6 +70,13 @@ public class ManejadorDeErrores {
     public ResponseEntity<ErrorHttp> productoNoEncontrado(ProductoNoEncontradoException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(new ErrorHttp("Producto no encontrado", e.getMessage(), Instant.now()));
+    }
+
+    /** El id pedido no esta en la tabla de solicitudes. */
+    @ExceptionHandler(SolicitudNoEncontradaException.class)
+    public ResponseEntity<ErrorHttp> solicitudNoEncontrada(SolicitudNoEncontradaException e) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(new ErrorHttp("Solicitud no encontrada", e.getMessage(), Instant.now()));
     }
 
     /**

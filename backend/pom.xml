@@ -23,6 +23,26 @@
         <java.version>21</java.version>
     </properties>
 
+    <!-- ========================================================================
+         El BOM del SDK de AWS: fija la version de TODOS sus modulos de una vez.
+
+         Hace falta porque spring-boot-dependencies no gestiona el SDK de AWS:
+         sin esto habria que escribir la version en cada dependencia y, el dia
+         que se agregue una segunda (S3, SNS), nada garantiza que sean de la
+         misma generacion.
+         ======================================================================== -->
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>2.55.3</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
     <dependencies>
         <!-- starter-web y no starter a secas: esto expone HTTP y trae el RestClient
              con el que se consume mindicador.cl. -->
@@ -120,6 +140,40 @@
             <artifactId>spring-boot-flyway</artifactId>
         </dependency>
 
+        <!-- ================================================================
+             La mensajeria: publicar el evento "solicitud creada" en RabbitMQ
+             para que notificaciones-ms avise por correo al aprobador.
+
+             El starter trae spring-rabbit, el cliente amqp-client y la
+             autoconfiguracion (ConnectionFactory, RabbitTemplate, RabbitAdmin).
+
+             OJO CON LO QUE NO HACE: la conexion es PEREZOSA. Este backend
+             arranca igual sin RabbitMQ delante y las pruebas corren sin
+             broker; lo que falla es la publicacion, en el momento de publicar.
+             Ver PublicadorDeSolicitudes.
+             ================================================================ -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-amqp</artifactId>
+        </dependency>
+
+        <!-- ================================================================
+             El cliente de Amazon SQS.
+
+             Convive con el starter de AMQP a proposito: backend.mensajeria.motor
+             decide cual de los dos se usa, y las dos implementaciones del
+             publicador estan en el paquete mensajeria. Ver la nota en
+             MensajeriaConfig.
+
+             NO se usa spring-cloud-aws (el de @SqsListener): esa libreria va
+             una generacion por detras de Spring Boot y hoy no soporta la 4.1.
+             Con el SDK a secas no hay nada que esperar y se ve lo que pasa.
+             ================================================================ -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sqs</artifactId>
+        </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
@@ -154,6 +208,26 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+
+            <!-- Todas las pruebas corren con el perfil "pruebas", que aplica
+                 src/test/resources/application-pruebas.yml ENCIMA del
+                 application.yml de siempre.
+
+                 NO ES UN DETALLE DE ESTILO: sin esto, "mvn test" hereda los
+                 valores por defecto del application.yml de src/main, que traen
+                 la URL, el usuario y la contrasena del PostgreSQL de RDS. O
+                 sea, la suite se conecta a la base REAL (la misma que abren los
+                 estudiantes con DBeaver) y el deleteAll() de una prueba borra
+                 las filas de todos. Ver la cabecera del archivo del perfil. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <spring.profiles.active>pruebas</spring.profiles.active>
+                    </systemPropertyVariables>
+                </configuration>
             </plugin>
         </plugins>
     </build>
